@@ -1,0 +1,4 @@
+Microsoft Visual C++ / OpenMP runtime dependencies copied from the user's existing Windows installation for this personal app.
+Copyright Microsoft Corporation. Subject to Microsoft's applicable runtime license.
+Official redistributable information: https://learn.microsoft.com/en-us/cpp/windows/latest-supported-vc-redist
+No global runtime installation or system file was changed.
