@@ -17,6 +17,7 @@ from unittest.mock import patch
 import wave
 
 from hisser.engine import Cancelled, Transcriber, TranscriptionError
+from hisser.models import ModelSpec
 
 
 _HELPER = r'''
@@ -26,8 +27,10 @@ tool, args = sys.argv[1], sys.argv[2:]
 config = json.loads((runtime / "scenario.json").read_text())
 mode = config.get("mode", "success")
 stage = {"ffprobe.exe":"probe", "ffmpeg.exe":"decode", "whisper-cli.exe":"infer"}[tool]
-(runtime / (stage + ".started")).write_text(str(__import__("os").getpid()))
 if mode == "hold_" + stage:
+    # Only cancellation tests synchronize with these markers. Ordinary retries
+    # do not need to reopen a fixture file that Windows may still be scanning.
+    (runtime / (stage + ".started")).write_text(str(__import__("os").getpid()))
     print("Started waiting", flush=True)
     time.sleep(30)
 if mode == stage + "_error":
@@ -41,6 +44,18 @@ elif stage == "decode":
         out.setparams((1, 2, 16000, 0, "NONE", "not compressed"))
         out.writeframes(bytes(16000 * 2 * 2))
 elif stage == "infer":
+    if mode == "gpu_then_cpu_error" and "-ng" in args:
+        print("Synthetic CPU recognition failure", file=sys.stderr, flush=True)
+        sys.exit(9)
+    if "-ng" not in args:
+        if mode in ("gpu_error", "gpu_then_cpu_error"):
+            print("CUDA error: out of memory", file=sys.stderr, flush=True)
+            sys.exit(8)
+        if mode == "gpu_generic_error":
+            print("Invalid model header", file=sys.stderr, flush=True)
+            sys.exit(7)
+        if mode != "gpu_silent_cpu":
+            print("whisper_backend_init_gpu: using CUDA0 backend", file=sys.stderr, flush=True)
     print("whisper_print_progress_callback: progress = 20%", file=sys.stderr, flush=True)
     print("whisper_print_progress_callback: progress = 100%", file=sys.stderr, flush=True)
     result = pathlib.Path(args[args.index("-of") + 1] + ".json")
@@ -138,6 +153,164 @@ class EngineTests(unittest.TestCase):
         self.assertEqual(result["duration_ms"], 2000)
         self.assert_clean()
 
+    def add_gpu_runtime(self):
+        directory = self.runtime / "cuda"
+        directory.mkdir(exist_ok=True)
+        (directory / "whisper-cli.exe").touch()
+
+    def test_auto_gpu_uses_selected_threads_and_actual_backend_metadata(self):
+        self.add_gpu_runtime()
+        self.engine = Transcriber(self.runtime, self.model, self.jobs, processing="auto", threads=6)
+        result = self.run_job()
+        infer = self.calls[-1]
+        self.assertEqual(Path(infer[0][0]).parent.name, "cuda")
+        self.assertNotIn("-ng", infer[0])
+        self.assertEqual(infer[0][infer[0].index("-t") + 1], "6")
+        self.assertEqual(infer[1]["cwd"], self.runtime / "cuda")
+        self.assertEqual(self.engine.actual_backend, "cuda")
+        self.assertIn("NVIDIA CUDA", result["engine"])
+        self.assertTrue(any(e.get("backend") == "cuda" and "acceleration" in e["message"] for e in self.events))
+        self.assert_clean()
+
+    def test_gpu_memory_failure_retries_once_on_cpu(self):
+        self.add_gpu_runtime()
+        self.scenario("gpu_error")
+        self.engine = Transcriber(self.runtime, self.model, self.jobs, processing="auto", threads=4)
+        result = self.run_job()
+        infer = [call for call in self.calls if Path(call[0][0]).name == "whisper-cli.exe"]
+        self.assertEqual(len(infer), 2)
+        self.assertNotIn("-ng", infer[0][0])
+        self.assertIn("-ng", infer[1][0])
+        self.assertIn("CPU", result["engine"])
+        self.assertEqual(len([e for e in self.events if e.get("fallback")]), 1)
+        self.assert_clean()
+
+    def test_gpu_generic_model_failure_never_retries(self):
+        self.add_gpu_runtime()
+        self.scenario("gpu_generic_error")
+        self.engine = Transcriber(self.runtime, self.model, self.jobs, processing="auto")
+        with self.assertRaisesRegex(TranscriptionError, "Invalid model header"):
+            self.run_job()
+        self.assertEqual(len([call for call in self.calls if Path(call[0][0]).name == "whisper-cli.exe"]), 1)
+        self.assertFalse(any(e.get("fallback") for e in self.events))
+        self.assert_clean()
+
+    def test_cancel_while_gpu_fails_never_retries_cpu(self):
+        self.add_gpu_runtime()
+        self.scenario("gpu_error")
+        self.engine = Transcriber(self.runtime, self.model, self.jobs, processing="auto")
+        original = self.engine._run_process
+        def cancel_after_gpu_failure(args, *a, **kwargs):
+            try:
+                return original(args, *a, **kwargs)
+            except TranscriptionError:
+                if Path(args[0]).parent.name == "cuda":
+                    self.engine.cancel()
+                raise
+        with patch.object(self.engine, "_run_process", side_effect=cancel_after_gpu_failure):
+            with self.assertRaises(Cancelled):
+                self.run_job()
+        self.assertEqual(len([call for call in self.calls if Path(call[0][0]).name == "whisper-cli.exe"]), 1)
+        self.assertFalse(any(e.get("fallback") for e in self.events))
+        self.assert_clean()
+
+    def test_gpu_loader_failures_retry_once_but_other_launch_errors_do_not(self):
+        self.add_gpu_runtime()
+        for code in (126, 127, 193, 1114, 5):
+            with self.subTest(winerror=code):
+                self.calls.clear()
+                self.events.clear()
+                self.engine = Transcriber(self.runtime, self.model, self.jobs, processing="auto")
+                error = OSError("Synthetic GPU loader failure")
+                error.winerror = code
+                original = self.engine._run_process
+                launched_gpu = []
+
+                def launch(args, *a, **kwargs):
+                    if Path(args[0]).parent.name == "cuda":
+                        launched_gpu.append(args)
+                        raise error
+                    return original(args, *a, **kwargs)
+
+                with patch.object(self.engine, "_run_process", side_effect=launch):
+                    if code == 5:
+                        with self.assertRaisesRegex(TranscriptionError, "required file"):
+                            self.run_job()
+                    else:
+                        self.assertIn("CPU", self.run_job()["engine"])
+                self.assertEqual(len(launched_gpu), 1)
+                self.assertEqual(len([e for e in self.events if e.get("fallback")]), int(code != 5))
+                self.assert_clean()
+
+    def test_gpu_loader_exit_status_and_dependency_message_retry_once(self):
+        self.add_gpu_runtime()
+        for message in ("exit -1073741515", "exit 3221225794", "exit -1073741701",
+                        "Could not find cublas64_11.dll. Please make sure it is in your library path!"):
+            with self.subTest(message=message):
+                self.calls.clear()
+                self.events.clear()
+                self.engine = Transcriber(self.runtime, self.model, self.jobs, processing="auto")
+                original = self.engine._run_process
+
+                def launch(args, *a, **kwargs):
+                    if Path(args[0]).parent.name == "cuda":
+                        raise TranscriptionError(message)
+                    return original(args, *a, **kwargs)
+
+                with patch.object(self.engine, "_run_process", side_effect=launch):
+                    self.assertIn("CPU", self.run_job()["engine"])
+                self.assertEqual(len([e for e in self.events if e.get("fallback")]), 1)
+                self.assert_clean()
+
+    def test_cancel_on_fallback_event_stops_before_cpu_launch(self):
+        self.add_gpu_runtime()
+        self.scenario("gpu_error")
+        self.engine = Transcriber(self.runtime, self.model, self.jobs, processing="auto")
+
+        def emit(event):
+            self.events.append(event)
+            if event.get("fallback"):
+                self.engine.cancel()
+
+        with self.assertRaises(Cancelled):
+            self.engine.run(self.source, "auto", emit)
+        self.assertEqual(len([call for call in self.calls if Path(call[0][0]).name == "whisper-cli.exe"]), 1)
+        self.assert_clean()
+
+    def test_cpu_failure_after_gpu_fallback_is_not_retried_or_completed(self):
+        self.add_gpu_runtime()
+        self.scenario("gpu_then_cpu_error")
+        self.engine = Transcriber(self.runtime, self.model, self.jobs, processing="auto")
+        with self.assertRaisesRegex(TranscriptionError, "Synthetic CPU recognition failure"):
+            self.run_job()
+        self.assertEqual(len([call for call in self.calls if Path(call[0][0]).name == "whisper-cli.exe"]), 2)
+        self.assertEqual(len([e for e in self.events if e.get("fallback")]), 1)
+        self.assert_clean()
+
+    def test_cpu_forced_and_gpu_absent_are_reported_honestly(self):
+        for processing, install_gpu in (("cpu", True), ("auto", False)):
+            with self.subTest(processing=processing):
+                self.calls.clear()
+                if install_gpu:
+                    self.add_gpu_runtime()
+                else:
+                    (self.runtime / "cuda" / "whisper-cli.exe").unlink(missing_ok=True)
+                self.engine = Transcriber(self.runtime, self.model, self.jobs, processing=processing)
+                result = self.run_job()
+                self.assertIn("-ng", self.calls[-1][0])
+                self.assertIn("CPU", result["engine"])
+                self.assert_clean()
+
+    def test_silent_runtime_cpu_fallback_is_not_mislabeled_gpu(self):
+        self.add_gpu_runtime()
+        self.scenario("gpu_silent_cpu")
+        self.engine = Transcriber(self.runtime, self.model, self.jobs, processing="auto")
+        result = self.run_job()
+        self.assertEqual(self.engine.actual_backend, "cpu")
+        self.assertIn("CPU", result["engine"])
+        self.assertFalse(any(e.get("kind") == "progress" and e.get("backend") == "cuda" for e in self.events))
+        self.assert_clean()
+
     def test_cancel_before_first_run_is_retained_and_retry_works(self):
         self.engine.cancel()
         with self.assertRaises(Cancelled):
@@ -171,6 +344,47 @@ class EngineTests(unittest.TestCase):
                 self.model.with_suffix(".bin.metadata.json").write_text(json.dumps(metadata))
                 with self.assertRaisesRegex(TranscriptionError, expected):
                     self.run_job()
+        self.assertEqual(self.calls, [])
+
+    def test_known_model_requires_matching_filename_size_and_sha_metadata(self):
+        # Patch the catalog lookup with a small pinned fixture; no large model or
+        # model download is needed to exercise production descriptor validation.
+        spec = ModelSpec("fixture-q5", "verified-fixture.bin", "Verified fixture", 128, "a" * 64)
+        self.model = self.root / spec.filename
+        self.model.write_bytes(b"lmgg" + bytes(124))
+        record = self.model.with_suffix(".bin.metadata.json")
+        with patch("hisser.engine.model_for_filename", return_value=spec):
+            self.engine = Transcriber(self.runtime, self.model, self.jobs)
+        for metadata in (None, {"size":128}, {"size":128, "sha256":"b" * 64},
+                         {"size":127, "sha256":spec.sha256}):
+            with self.subTest(metadata=metadata):
+                if metadata is None:
+                    record.unlink(missing_ok=True)
+                else:
+                    record.write_text(json.dumps(metadata), encoding="utf-8")
+                with self.assertRaisesRegex(TranscriptionError, "verification record"):
+                    self.run_job()
+        self.assertEqual(self.calls, [])
+        record.write_text(json.dumps({"size":128, "sha256":spec.sha256}), encoding="utf-8")
+        result = self.run_job()
+        self.assertIn("fixture-q5", result["engine"])
+        self.assert_clean()
+
+        self.calls.clear()
+        self.model.write_bytes(b"lmgg" + bytes(125))
+        with self.assertRaisesRegex(TranscriptionError, "selected verified transcription profile"):
+            self.run_job()
+        wrong_name = self.root / "wrong-model.bin"
+        wrong_name.write_bytes(b"lmgg" + bytes(124))
+        self.engine = Transcriber(self.runtime, wrong_name, self.jobs, model_spec=spec)
+        with self.assertRaisesRegex(TranscriptionError, "selected verified transcription profile"):
+            self.run_job()
+        self.assertEqual(self.calls, [])
+
+    def test_model_is_never_read_during_engine_construction(self):
+        with patch("pathlib.Path.open", side_effect=AssertionError("model opened at startup")):
+            engine = Transcriber(self.runtime, self.model, self.jobs)
+        self.assertIsNone(engine._process)
         self.assertEqual(self.calls, [])
 
     def test_no_audio_corrupt_media_inference_failure_and_retry(self):

@@ -111,9 +111,30 @@ function Assert-NotRunning {
 }
 
 function Test-Package([string]$Folder) {
-    foreach ($Relative in @('Hisser.exe', '_internal\assets\hisser.ico', '_internal\runtime\whisper-cli.exe', '_internal\runtime\ffmpeg.exe', '_internal\runtime\ffprobe.exe')) {
-        if (-not (Test-Path -LiteralPath (Join-Path $Folder $Relative) -PathType Leaf)) { throw "The package is missing $Relative. Rebuild Hisser." }
+    $Required = @('Hisser.exe', '_internal\assets\hisser.ico')
+    foreach ($Name in @('whisper-cli.exe', 'whisper.dll', 'ggml.dll', 'ggml-base.dll', 'ggml-cpu-x64.dll', 'ffmpeg.exe', 'ffprobe.exe', 'msvcp140.dll', 'vcruntime140.dll', 'vcruntime140_1.dll', 'vcomp140.dll')) {
+        $Required += '_internal\runtime\' + $Name
     }
+    foreach ($Relative in $Required) {
+        $RequiredPath = Join-Path $Folder $Relative
+        if (-not (Test-Path -LiteralPath $RequiredPath -PathType Leaf) -or (Get-Item -LiteralPath $RequiredPath).Length -le 0) { throw "The package is missing or has an empty $Relative. Rebuild Hisser." }
+    }
+    $Manifest = Get-Content -LiteralPath (Join-Path $Folder 'build-manifest.json') -Raw -Encoding UTF8 | ConvertFrom-Json
+    if ($Manifest.backend -notin @('cpu', 'cuda')) { throw 'The build manifest has an invalid processing backend.' }
+    if ($Manifest.backend -eq 'cuda') {
+        foreach ($Name in @('whisper-cli.exe', 'whisper.dll', 'ggml.dll', 'ggml-base.dll', 'ggml-cpu-x64.dll', 'ggml-cuda.dll', 'cudart64_110.dll', 'nvrtc64_112_0.dll', 'nvrtc-builtins64_118.dll', 'cublas64_11.dll', 'cublasLt64_11.dll', 'msvcp140.dll', 'vcruntime140.dll', 'vcruntime140_1.dll', 'vcomp140.dll')) {
+            $RequiredPath = Join-Path $Folder ('_internal\runtime\cuda\' + $Name)
+            if (-not (Test-Path -LiteralPath $RequiredPath -PathType Leaf) -or (Get-Item -LiteralPath $RequiredPath).Length -le 0) { throw "The CUDA package is missing or has an empty $Name. Rebuild the complete runtime." }
+        }
+    } elseif (Test-Path -LiteralPath (Join-Path $Folder '_internal\runtime\cuda')) {
+        throw 'A CPU package must not retain the optional CUDA runtime.'
+    }
+}
+
+function Assert-StorageCap([string]$Folder) {
+    $Bytes = [long](Get-ChildItem -LiteralPath $Folder -File -Recurse -Force | Measure-Object Length -Sum).Sum
+    if ($Bytes -ge 4000000000) { throw "The complete portable app must remain below 4 GB ($Bytes bytes found)." }
+    return $Bytes
 }
 
 function Invoke-PackageCheck([string]$Folder) {
@@ -123,6 +144,8 @@ function Invoke-PackageCheck([string]$Folder) {
     if ($Process.ExitCode -ne 0 -or -not (Test-Path -LiteralPath $ReportPath -PathType Leaf)) { throw 'The portable application failed startup. The prior folder/model will be restored.' }
     $Result = Get-Content -LiteralPath $ReportPath -Raw -Encoding UTF8 | ConvertFrom-Json
     if (-not $Result.runtime_files -or -not $Result.tk -or -not $Result.model -or -not $Result.exports -or -not $Result.portable) { throw 'The portable application could not verify Tk, runtime, model, exports and portable mode.' }
+    if ($Result.model_id -ne $ModelId -or $Result.cpu_threads -ne $CpuThreads) { throw 'The application is using a different model or CPU setting than the verified profile.' }
+    if (($BuildManifest.backend -eq 'cuda') -ne [bool]$Result.cuda_runtime) { throw 'The packaged CUDA dependencies do not match the build manifest.' }
     $ExpectedData = [IO.Path]::GetFullPath((Join-Path $Folder 'data')).TrimEnd('\')
     if (-not [string]::Equals([string]$Result.data_root, $ExpectedData, [StringComparison]::OrdinalIgnoreCase)) { throw 'The application is using data outside its portable folder. Deployment stopped.' }
     return $Result
@@ -160,11 +183,33 @@ if ($DataDirectory) {
 }
 if (-not $DataOrigin) { throw 'The verified model/data folder is missing. Restore it before packaging.' }
 Assert-SafeDataOrigin $DataOrigin
-$ModelPath = Join-Path $DataOrigin 'models\ggml-large-v3-q5_0.bin'
+$ModelCatalog = @{
+    'large-v3-q5_0' = @{ filename = 'ggml-large-v3-q5_0.bin'; size = [long]1081140203; sha256 = 'd75795ecff3f83b5faa89d1900604ad8c780abd5739fae406de19f23ecd98ad1' }
+    'large-v3-turbo-q5_0' = @{ filename = 'ggml-large-v3-turbo-q5_0.bin'; size = [long]574041195; sha256 = '394221709cd5ad1f40c46e6031ca61bce88931e6e088c188294c6d5a55ffa7e2' }
+}
+$ProfilePath = Join-Path $DataOrigin 'transcription-profile.json'
+$ModelId = 'large-v3-q5_0'
+$CpuThreads = 6
+if (Test-Path -LiteralPath $ProfilePath -PathType Leaf) {
+    $TranscriptionProfile = Get-Content -LiteralPath $ProfilePath -Raw -Encoding UTF8 | ConvertFrom-Json
+    if (-not $ModelCatalog.ContainsKey([string]$TranscriptionProfile.model_id)) { throw 'The transcription profile selects an unrecognized model.' }
+    $ModelId = [string]$TranscriptionProfile.model_id
+    if ($null -ne $TranscriptionProfile.PSObject.Properties['cpu_threads']) {
+        $CpuThreads = $TranscriptionProfile.cpu_threads
+        if (($CpuThreads -isnot [int] -and $CpuThreads -isnot [long]) -or $CpuThreads -lt 1 -or $CpuThreads -gt 32) { throw 'The transcription profile has an invalid CPU thread count.' }
+    }
+}
+$SelectedModel = $ModelCatalog[$ModelId]
+$ModelPath = Join-Path $DataOrigin ('models\' + $SelectedModel.filename)
 $MetadataPath = $ModelPath + '.metadata.json'
 if (-not (Test-Path -LiteralPath $ModelPath -PathType Leaf) -or -not (Test-Path -LiteralPath $MetadataPath -PathType Leaf)) { throw 'The model or its verification metadata is missing.' }
 $Metadata = Get-Content -LiteralPath $MetadataPath -Raw -Encoding UTF8 | ConvertFrom-Json
-if ((Get-Item -LiteralPath $ModelPath).Length -ne $Metadata.size -or (Get-FileHash -LiteralPath $ModelPath -Algorithm SHA256).Hash.ToLowerInvariant() -ne $Metadata.sha256) { throw 'The model does not match its upstream verification record.' }
+if ($Metadata.size -ne $SelectedModel.size -or $Metadata.sha256 -ne $SelectedModel.sha256 -or (Get-Item -LiteralPath $ModelPath).Length -ne $SelectedModel.size -or (Get-FileHash -LiteralPath $ModelPath -Algorithm SHA256).Hash.ToLowerInvariant() -ne $SelectedModel.sha256) { throw 'The model does not match its pinned upstream verification record.' }
+$ModelFiles = @(Get-ChildItem -LiteralPath $DataOrigin -Recurse -Force -File -Filter '*.bin')
+if ($ModelFiles.Count -ne 1) { throw 'A portable package must retain exactly one model. Move comparison models outside its data folder before deployment.' }
+$EstimatedPortableBytes = [long](Get-ChildItem -LiteralPath $BuildDirectory -Recurse -Force -File | Measure-Object Length -Sum).Sum + [long](Get-ChildItem -LiteralPath $DataOrigin -Recurse -Force -File | Measure-Object Length -Sum).Sum
+if ($EstimatedPortableBytes -ge 4000000000) { throw "The selected portable package must remain below 4 GB ($EstimatedPortableBytes bytes). Keep a smaller verified profile/runtime combination." }
+$BuildManifest = Get-Content -LiteralPath (Join-Path $BuildDirectory 'build-manifest.json') -Raw -Encoding UTF8 | ConvertFrom-Json
 Assert-NotRunning
 if (-not $PSCmdlet.ShouldProcess($PortableRoot, 'Stage and verify the app, move the single model/data directory, and create the Hisser desktop shortcut')) { return }
 
@@ -174,7 +219,7 @@ try {
     foreach ($Item in (Get-ChildItem -LiteralPath $BuildDirectory -Force)) { Copy-Item -LiteralPath $Item.FullName -Destination $StageRoot -Recurse -Force }
     $Guide = Join-Path $ProjectRoot 'USER_GUIDE.md'
     if (Test-Path -LiteralPath $Guide -PathType Leaf) { Copy-Item -LiteralPath $Guide -Destination (Join-Path $StageRoot 'USER_GUIDE.md') }
-    $MarkerText = [ordered]@{ application_id = $ApplicationId; name = 'Hisser'; version = '1.0.0'; portable = $true; data_relative_path = 'data'; created_utc = [DateTime]::UtcNow.ToString('o') } | ConvertTo-Json
+    $MarkerText = [ordered]@{ application_id = $ApplicationId; name = 'Hisser'; version = $BuildManifest.version; portable = $true; data_relative_path = 'data'; created_utc = [DateTime]::UtcNow.ToString('o') } | ConvertTo-Json
     [IO.File]::WriteAllText((Join-Path $StageRoot 'portable.json'), $MarkerText + "`n", [Text.UTF8Encoding]::new($false))
     Test-Package $StageRoot
     Assert-NotRunning
@@ -183,6 +228,7 @@ try {
     Move-Item -LiteralPath $DataOrigin -Destination (Join-Path $StageRoot 'data')
     $DataMoved = $true
     $null = Invoke-PackageCheck $StageRoot
+    $null = Assert-StorageCap $StageRoot
     if (Test-Path -LiteralPath $PortableRoot) {
         Assert-PortablePath $PortableRoot
         Assert-PortablePath $BackupRoot
@@ -194,6 +240,7 @@ try {
     Move-Item -LiteralPath $StageRoot -Destination $PortableRoot
     $NewMoved = $true
     $SelfTest = Invoke-PackageCheck $PortableRoot
+    $FinalPortableBytes = Assert-StorageCap $PortableRoot
     $Shell = New-Object -ComObject WScript.Shell
     if (Test-Path -LiteralPath $DesktopShortcut) {
         if (-not (Test-Path -LiteralPath $DesktopShortcut -PathType Leaf)) { throw 'A directory occupies the Hisser desktop shortcut path.' }
@@ -224,10 +271,11 @@ try {
         folder = $PortableRoot
         executable = (Join-Path $PortableRoot 'Hisser.exe')
         data_directory = (Join-Path $PortableRoot 'data')
-        bytes = [long](Get-ChildItem -LiteralPath $PortableRoot -File -Recurse | Measure-Object Length -Sum).Sum
+        bytes = $FinalPortableBytes
         model_copied = $false
         model_moved_from = $DataOrigin
         model_sha256 = $Metadata.sha256
+        model_id = $ModelId
         external_registration_created = $false
         external_shortcuts_created = $true
         desktop_shortcut = $DesktopShortcut

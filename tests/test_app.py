@@ -342,3 +342,61 @@ def test_invalid_formats_setting_does_not_prevent_launch(tmp_path, monkeypatch):
     finally:
         if window is not None:
             window.destroy()
+
+
+def test_processing_choice_and_profile_reach_worker(native_app, transcript, tmp_path, monkeypatch):
+    window = native_app
+    profile = app_module.load_profile(tmp_path)
+    captured = {}
+
+    class RecordingWorker:
+        def __init__(self, runtime, model, **kwargs):
+            captured.update(runtime=runtime, model=model, **kwargs)
+
+        def run(self, _source, _language, emit):
+            emit({"kind": "status", "message": "Transcribing on NVIDIA GPU…", "backend": "cuda", "model": profile.model.label})
+            return transcript
+
+    monkeypatch.setattr(app_module, "Transcriber", RecordingWorker)
+    window.source.set(str(tmp_path / "sample.wav"))
+    window.processing.set("CPU")
+    window.start()
+    assert captured["processing"] == "cpu"
+    assert captured["threads"] == profile.cpu_threads
+    assert captured["model_spec"] == profile.model
+    assert window.processing_box.instate(["disabled"])
+    DeferredThread.created[0].finish()
+    window._poll()
+    assert "NVIDIA GPU" in window.detail.get()
+    assert window.processing_box.instate(["readonly"])
+
+
+def test_profile_failure_remains_retryable(native_app, tmp_path, monkeypatch):
+    window = native_app
+    window.source.set(str(tmp_path / "sample.wav"))
+
+    def damaged_profile(_path):
+        raise ValueError("The local transcription profile is damaged.")
+
+    monkeypatch.setattr(app_module, "load_profile", damaged_profile)
+    window.start()
+    window._poll()
+    assert not window.busy
+    assert window.start_button["text"] == "Retry"
+    assert window.export_button.instate(["disabled"])
+    assert "profile is damaged" in window.text.get("1.0", "end")
+
+
+def test_gpu_fallback_explanation_survives_progress_and_completion(native_app, transcript):
+    window = native_app
+    window.job = object()
+    window.busy = True
+    window.events.put({"kind": "status", "backend": "cpu", "model": "Large-v3 Turbo", "fallback": True,
+                       "message": "NVIDIA GPU initialization or memory failed. Retrying once on CPU…"})
+    window.events.put({"kind": "progress", "backend": "cpu", "model": "Large-v3 Turbo", "percent": 50,
+                       "message": "Transcribing on CPU…"})
+    window._poll()
+    assert "retried once on CPU" in window.detail.get()
+    complete(window, transcript)
+    assert "Large-v3 Turbo" in window.detail.get()
+    assert "GPU unavailable; retried once on CPU" in window.detail.get()

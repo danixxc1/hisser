@@ -13,6 +13,8 @@ from tkinter import filedialog, messagebox, ttk
 
 from .engine import Cancelled, Transcriber
 from .exports import export_transcript
+from .models import load_profile
+from . import __version__
 
 LANGUAGES = {
     "Auto-detect": "auto", "Tagalog / Filipino": "tl", "English": "en",
@@ -69,6 +71,8 @@ class App(tk.Tk):
         self.exporting = False
         self.closing = False
         self.cancel_requested = False
+        self.processing_summary = ""
+        self.processing_notice = ""
         self.started = 0.0
         self.settings_path = data_root() / "settings.json"
         try:
@@ -90,6 +94,9 @@ class App(tk.Tk):
         self.language = tk.StringVar(value=self.settings.get("language", "Auto-detect"))
         if self.language.get() not in LANGUAGES:
             self.language.set("Auto-detect")
+        self.processing = tk.StringVar(value=self.settings.get("processing", "Automatic"))
+        if self.processing.get() not in ("Automatic", "CPU"):
+            self.processing.set("Automatic")
         self.status = tk.StringVar(value="Choose an audio or video file to begin.")
         self.elapsed = tk.StringVar(value="")
         self.detail = tk.StringVar(value="Your transcript will appear here.")
@@ -152,13 +159,20 @@ class App(tk.Tk):
         self.browse.grid(row=0, column=1)
         controls = ttk.Frame(body)
         controls.grid(row=3, column=0, sticky="ew", pady=(15, 17))
-        ttk.Label(controls, text="Language").pack(side="left", padx=(0, 10))
-        self.language_box = ttk.Combobox(controls, textvariable=self.language, values=list(LANGUAGES), state="readonly", width=23)
-        self.language_box.pack(side="left")
+        language_group = ttk.Frame(controls)
+        language_group.pack(side="left", padx=(0, 18))
+        ttk.Label(language_group, text="Language").pack(anchor="w", pady=(0, 5))
+        self.language_box = ttk.Combobox(language_group, textvariable=self.language, values=list(LANGUAGES), state="readonly", width=23)
+        self.language_box.pack(anchor="w")
+        processing_group = ttk.Frame(controls)
+        processing_group.pack(side="left")
+        ttk.Label(processing_group, text="Processing").pack(anchor="w", pady=(0, 5))
+        self.processing_box = ttk.Combobox(processing_group, textvariable=self.processing, values=("Automatic", "CPU"), state="readonly", width=13)
+        self.processing_box.pack(anchor="w")
         self.start_button = ttk.Button(controls, text="Transcribe", style="Primary.TButton", command=self.start, state="disabled")
-        self.start_button.pack(side="right")
+        self.start_button.pack(side="right", anchor="s")
         self.cancel_button = ttk.Button(controls, text="Cancel", command=self.cancel, state="disabled")
-        self.cancel_button.pack(side="right", padx=10)
+        self.cancel_button.pack(side="right", anchor="s", padx=10)
         state = ttk.Frame(body)
         state.grid(row=4, column=0, sticky="ew", pady=(0, 16))
         state.columnconfigure(0, weight=1)
@@ -185,7 +199,8 @@ class App(tk.Tk):
         self.text.bind("<Tab>", lambda e: (self.text.tk_focusNext().focus_set(), "break")[1])
         self.text.bind("<Shift-Tab>", lambda e: (self.text.tk_focusPrev().focus_set(), "break")[1])
         self._preview("Choose a file above, then select Transcribe.\n\nWhen it’s ready, select words here or use Copy text. Choose one or more formats below to save the same transcript.")
-        ttk.Label(body, textvariable=self.detail, style="Muted.TLabel").grid(row=7, column=0, sticky="w", pady=(7, 14))
+        self.detail_label = ttk.Label(body, textvariable=self.detail, style="Muted.TLabel", wraplength=900)
+        self.detail_label.grid(row=7, column=0, sticky="w", pady=(7, 14))
         exports = ttk.Frame(body)
         exports.grid(row=8, column=0, sticky="ew")
         ttk.Label(exports, text="Save as", style="Heading.TLabel").pack(side="left", padx=(0, 16))
@@ -202,6 +217,7 @@ class App(tk.Tk):
     def _resize(self, event):
         if event.widget is self:
             self.status_label.configure(wraplength=max(420, event.width - 200))
+            self.detail_label.configure(wraplength=max(420, event.width - 60))
 
     def _select_all(self, _event):
         self.text.tag_add("sel", "1.0", "end-1c")
@@ -237,13 +253,23 @@ class App(tk.Tk):
         self.cancel_requested = False
         self.started = time.monotonic()
         self.transcript = None
+        self.processing_summary = ""
+        self.processing_notice = ""
         self._set_busy(True)
         self._preview("Transcribing locally. You can leave this window open while you work.")
-        self.detail.set("Large-v3 model · CPU · This can take longer than the recording.")
+        self.detail.set("Preparing your local transcription profile…")
         self.status.set("Preparing audio…")
         self.progress.configure(mode="indeterminate", value=0)
         self.progress.start(15)
-        self.job = Transcriber(resource_root() / "runtime", data_root() / "models/ggml-large-v3-q5_0.bin", temp_root=data_root() / "temp")
+        try:
+            profile = load_profile(data_root())
+            self.job = Transcriber(resource_root() / "runtime", data_root() / "models" / profile.model.filename,
+                                   temp_root=data_root() / "temp", processing="auto" if self.processing.get() == "Automatic" else "cpu",
+                                   threads=profile.cpu_threads, model_spec=profile.model)
+            self.detail.set(f"{profile.model.label} · {self.processing.get()} processing")
+        except Exception as exc:
+            self.events.put({"kind": "error", "message": str(exc)})
+            return
         source, language = Path(self.source.get()), LANGUAGES[self.language.get()]
         def work():
             try:
@@ -260,6 +286,7 @@ class App(tk.Tk):
         for w in (self.browse, self.start_button):
             w.configure(state="disabled" if value else "normal")
         self.language_box.configure(state="disabled" if value else "readonly")
+        self.processing_box.configure(state="disabled" if value else "readonly")
         self.cancel_button.configure(state="normal" if value else "disabled")
         self.copy_button.configure(state="normal" if self.transcript and not value else "disabled")
         self._export_state()
@@ -279,6 +306,12 @@ class App(tk.Tk):
                 if kind in ("status", "progress"):
                     if self.job and not self.cancel_requested and not self.closing:
                         self.status.set(event.get("message", "Transcribing…"))
+                        if event.get("fallback"):
+                            self.processing_notice = "GPU unavailable; retried once on CPU."
+                        if event.get("backend"):
+                            backend = "NVIDIA GPU" if event["backend"] == "cuda" else "CPU"
+                            self.processing_summary = f"{event.get('model', 'Whisper')} · {backend}"
+                            self.detail.set(self.processing_summary + (" · " + self.processing_notice if self.processing_notice else ""))
                         percent = event.get("percent")
                         if percent is not None:
                             self.progress.stop()
@@ -293,7 +326,7 @@ class App(tk.Tk):
                         self.transcript = event["transcript"]
                         words = len(self.transcript.get("text", "").split())
                         self.status.set("Transcription complete. Choose your export formats below.")
-                        self.detail.set(f"{words:,} words · Language: {self.transcript.get('language', 'unknown')} · {len(self.transcript['segments']):,} timed segments")
+                        self.detail.set(f"{words:,} words · Language: {self.transcript.get('language', 'unknown')} · {self.processing_summary or self.transcript.get('engine', 'Local transcription')}" + (" · " + self.processing_notice if self.processing_notice else ""))
                         self._preview(self.transcript.get("text", "") or "No speech was detected in this file.")
                     elif kind == "cancelled":
                         self.status.set("Cancelled. You can try again or choose another file.")
@@ -375,7 +408,17 @@ class App(tk.Tk):
         threading.Thread(target=write, name="Hisser export", daemon=True).start()
 
     def help(self):
-        messagebox.showinfo("Using Hisser", "1. Choose a local audio or video file.\n2. Use Auto-detect, or choose Tagalog / Filipino or another language.\n3. Select Transcribe. Cancel stops this job safely.\n4. Copy text, or select formats and Save transcript.\n\nMultiple formats use a folder; one format opens Save As. Exports never rerun recognition.\n\nProcessing stays on this computer after setup. The large model can be slow on CPU; start with a short sample. Temporary decoded audio uses about 115 MB per hour and is removed after each job. Model/runtime working memory needs several GB.\n\nSpeech recognition can make mistakes, especially names, background dialogue and mixed languages. Review important wording against the recording.\n\nHisser 1.0.0", parent=self)
+        messagebox.showinfo("Using Hisser",
+            "1. Choose a local audio or video file.\n"
+            "2. Choose the recording's language. Selecting Tagalog / Filipino avoids the language-detection step for Tagalog recordings.\n"
+            "3. Leave Processing on Automatic to use the bundled NVIDIA GPU runtime when available. CPU forces CPU processing.\n"
+            "4. Select Transcribe. Cancel stops this job safely.\n"
+            "5. Copy text, or select formats and Save transcript.\n\n"
+            "If GPU initialization or GPU memory fails, Automatic retries once on CPU and tells you. CPU processing can take longer.\n\n"
+            "Multiple formats use a folder; one format opens Save As. Exports never rerun recognition.\n\n"
+            "Processing stays on this computer after setup. Start with a short sample. Temporary audio uses about 115 MB per hour and is removed after each job. Working memory needs several GB.\n\n"
+            "Review important wording against the recording, especially names, background dialogue and mixed languages.\n\n"
+            f"Hisser {__version__}", parent=self)
 
     def close(self):
         if self.exporting:
@@ -391,7 +434,7 @@ class App(tk.Tk):
         self._finish_close()
 
     def _finish_close(self):
-        self.settings.update(language=self.language.get(), formats=[f for f, v in self.formats.items() if v.get()])
+        self.settings.update(language=self.language.get(), processing=self.processing.get(), formats=[f for f, v in self.formats.items() if v.get()])
         try:
             self.settings_path.parent.mkdir(parents=True, exist_ok=True)
             temp = self.settings_path.with_suffix(".tmp")

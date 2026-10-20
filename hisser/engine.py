@@ -21,6 +21,8 @@ import time
 from typing import Callable
 import wave
 
+from .models import ModelSpec, model_for_filename
+
 
 class TranscriptionError(RuntimeError):
     """An actionable media, runtime, or recognition failure."""
@@ -40,6 +42,16 @@ SUPPORTED_LANGUAGES = frozenset(
 _PERCENT = re.compile(r"progress\s*[=:]\s*(\d{1,3}(?:\.\d+)?)\s*%", re.IGNORECASE)
 _MAX_LOG_CHARS = 1800
 _ENGINE = "whisper.cpp b5454 / large-v3-q5_0"
+_CUDA_USED = re.compile(r"(?:using\s+CUDA\d*\s+backend|CUDA\d+\s+(?:buffer|total)\s+(?:size|=))", re.IGNORECASE)
+_CUDA_FAILURE = re.compile(
+    r"(?:CUDA\s+error|CUDA_ERROR_|cudaGetDeviceCount|no CUDA(?:-capable)? devices?|"
+    r"failed to initialize (?:CUDA|GPU)|(?:CUDA|GPU).*insufficient driver|"
+    r"(?:CUDA|GPU).*out of memory|out of device memory|"
+    r"failed to allocate (?:CUDA|GPU)|ggml_cuda.*(?:failed|error)|"
+    r"(?:could not|cannot|unable to|failed to)\s+(?:load|find).*"
+    r"(?:ggml-cuda|cudart|nvrtc|cublas)|cublas.*(?:failed|error))",
+    re.IGNORECASE,
+)
 
 
 def _seconds_to_ms(value: object) -> int:
@@ -58,10 +70,19 @@ def _bounded_detail(lines: deque[str]) -> str:
 
 
 class Transcriber:
-    def __init__(self, runtime_dir: Path, model_path: Path, temp_root: Path | None = None):
+    def __init__(self, runtime_dir: Path, model_path: Path, temp_root: Path | None = None,
+                 *, processing: str = "cpu", threads: int = 2, model_spec: ModelSpec | None = None):
         self.runtime_dir = Path(runtime_dir).resolve()
         self.model_path = Path(model_path).resolve()
         self.temp_root = Path(temp_root).resolve() if temp_root is not None else None
+        if processing not in ("auto", "cpu"):
+            raise ValueError("Processing must be 'auto' or 'cpu'.")
+        if isinstance(threads, bool) or not isinstance(threads, int) or not 1 <= threads <= 32:
+            raise ValueError("CPU threads must be an integer between 1 and 32.")
+        self.processing = processing
+        self.threads = threads
+        self.model_spec = model_spec or model_for_filename(self.model_path.name)
+        self.actual_backend = "cpu"
         self._cancelled = threading.Event()
         self._run_lock = threading.Lock()
         self._process_lock = threading.Lock()
@@ -92,7 +113,8 @@ class Transcriber:
             if not (self.runtime_dir / name).is_file():
                 raise TranscriptionError(f"Hisser is missing {name}. Restore the complete Hisser folder, including its _internal folder, and retry.")
         if not self.model_path.is_file():
-            raise TranscriptionError("The local Whisper model is missing. Restore data/models/ggml-large-v3-q5_0.bin inside the Hisser folder and retry.")
+            expected = self.model_spec.filename if self.model_spec else self.model_path.name
+            raise TranscriptionError(f"The local Whisper model is missing. Restore data/models/{expected} inside the Hisser folder and retry.")
         try:
             with self.model_path.open("rb") as model:
                 magic = model.read(4)
@@ -102,13 +124,21 @@ class Transcriber:
         # GGML_FILE_MAGIC 0x67676d6c is stored little-endian by whisper.cpp.
         if magic != b"lmgg" or size < 64:
             raise TranscriptionError("The local model is corrupt or is not a whisper.cpp GGML model. Restore the verified model in Hisser's data/models folder.")
+        if self.model_spec is not None:
+            if self.model_path.name != self.model_spec.filename or size != self.model_spec.size:
+                raise TranscriptionError("The local model does not match the selected verified transcription profile. Restore its model in data/models.")
         metadata_path = self.model_path.with_suffix(self.model_path.suffix + ".metadata.json")
+        if self.model_spec is not None and not metadata_path.is_file():
+            raise TranscriptionError("The model verification record is missing. Restore the verified model and its metadata file in data/models.")
         if metadata_path.is_file():
             try:
                 metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
                 expected_size = metadata.get("size", metadata.get("size_bytes"))
                 if isinstance(expected_size, bool) or not isinstance(expected_size, int) or expected_size <= 0:
                     raise ValueError("invalid size")
+                if self.model_spec is not None and (
+                        expected_size != self.model_spec.size or metadata.get("sha256") != self.model_spec.sha256):
+                    raise ValueError("metadata does not match pinned model")
             except (OSError, ValueError, TypeError, AttributeError) as exc:
                 raise TranscriptionError("The model verification record is damaged. Restore the verified model and its metadata file in data/models.") from exc
             if size != expected_size:
@@ -165,14 +195,11 @@ class Transcriber:
                     self._check_cancelled()
                     emit({"kind": "status", "phase": "finalizing", "message": "The file contains only digital silence."})
                     self._check_cancelled()
-                    return self._canonical({"transcription": []}, source, language, duration_ms)
-                emit({"kind": "status", "phase": "transcribing", "message": "Loading model and transcribing on CPU…", "percent": 0})
+                    result = self._canonical({"transcription": []}, source, language, duration_ms)
+                    result["engine"] = self._engine_label("none (digital silence)")
+                    return result
                 output = work / "transcript"
-                self._run_process([
-                    str(self.runtime_dir / "whisper-cli.exe"), "-m", str(self.model_path),
-                    "-f", str(inference_audio), "-l", language, "-t", "2", "-p", "1", "-ng",
-                    "-pp", "-ojf", "-of", str(output),
-                ], "Transcription", self._inference_progress(emit))
+                self._recognize(inference_audio, language, output, emit)
                 self._check_cancelled()
                 emit({"kind": "status", "phase": "finalizing", "message": "Preparing transcript…"})
                 try:
@@ -180,6 +207,7 @@ class Transcriber:
                 except (OSError, ValueError) as exc:
                     raise TranscriptionError("Whisper did not produce a readable transcript. Retry the file; if it persists, restore the model.") from exc
                 result = self._canonical(raw, source, language, duration_ms, offset_ms=offset_ms)
+                result["engine"] = self._engine_label(self.actual_backend)
                 self._check_cancelled()
             return result
         except OSError as exc:
@@ -188,6 +216,82 @@ class Transcriber:
             raise TranscriptionError(f"Hisser could not access a required file: {str(exc)[:350]}") from exc
         finally:
             self._run_lock.release()
+
+    def _engine_label(self, backend: str) -> str:
+        model_id = self.model_spec.id if self.model_spec else "large-v3-q5_0"
+        label = "NVIDIA CUDA" if backend == "cuda" else "CPU" if backend == "cpu" else backend
+        return f"whisper.cpp b5454 / {model_id} / {label}"
+
+    def _recognize(self, audio: Path, language: str, output: Path, emit: Callable[[dict], None]) -> None:
+        cuda_cli = self.runtime_dir / "cuda" / "whisper-cli.exe"
+        use_cuda = self.processing == "auto" and cuda_cli.is_file()
+        if self.processing == "auto" and not use_cuda:
+            emit({"kind": "status", "phase": "transcribing", "backend": "cpu",
+                  "model": self.model_spec.label if self.model_spec else "Large-v3", "threads": self.threads,
+                  "message": "NVIDIA acceleration is unavailable in this package. Using CPU…"})
+        for attempt in range(2 if use_cuda else 1):
+            self._check_cancelled()
+            backend = "cuda" if use_cuda and attempt == 0 else "cpu"
+            cli = cuda_cli if backend == "cuda" else self.runtime_dir / "whisper-cli.exe"
+            self.actual_backend = "cpu"
+            observed_cuda = False
+            gpu_failure = False
+            model_label = self.model_spec.label if self.model_spec else "Large-v3"
+            emit({"kind": "status", "phase": "transcribing", "backend": backend,
+                  "model": model_label, "threads": self.threads, "percent": 0,
+                  "message": "Loading model and checking NVIDIA acceleration…" if backend == "cuda" else "Loading model and transcribing on CPU…"})
+            def emit_progress(event: dict) -> None:
+                actual = "cuda" if observed_cuda else "cpu"
+                event.update(backend=actual, message="Transcribing with NVIDIA GPU acceleration…" if actual == "cuda" else "Transcribing on CPU…")
+                emit(event)
+
+            progress = self._inference_progress(emit_progress, backend, model_label, self.threads)
+
+            def inspect(stream: str, line: str) -> None:
+                nonlocal observed_cuda, gpu_failure
+                if backend == "cuda":
+                    if _CUDA_USED.search(line) and not observed_cuda:
+                        observed_cuda = True
+                        self.actual_backend = "cuda"
+                        emit({"kind": "status", "phase": "transcribing", "backend": "cuda",
+                              "model": model_label, "threads": self.threads,
+                              "message": "Transcribing with NVIDIA GPU acceleration…"})
+                    if _CUDA_FAILURE.search(line):
+                        gpu_failure = True
+                progress(stream, line)
+
+            args = [str(cli), "-m", str(self.model_path), "-f", str(audio), "-l", language,
+                    "-t", str(self.threads), "-p", "1", "-pp", "-ojf", "-of", str(output)]
+            if backend == "cpu":
+                args.append("-ng")
+            try:
+                self._run_process(args, "Transcription", inspect)
+            except Cancelled:
+                raise
+            except (TranscriptionError, OSError) as exc:
+                self._check_cancelled()
+                # Missing DLLs, incompatible images and failed DLL initialization
+                # make this optional GPU runtime unusable; the CPU package remains
+                # independent. Arbitrary recognition failures must still surface.
+                loader_failure = getattr(exc, "winerror", None) in (126, 127, 193, 1114)
+                loader_failure = loader_failure or any(code in str(exc) for code in
+                    ("-1073741515", "3221225781", "-1073741502", "3221225794",
+                     "-1073741701", "3221225595"))
+                if backend != "cuda" or not (gpu_failure or loader_failure or _CUDA_FAILURE.search(str(exc))):
+                    raise
+                self._check_cancelled()
+                output.with_suffix(".json").unlink(missing_ok=True)
+                emit({"kind": "status", "phase": "transcribing", "backend": "cpu",
+                      "model": model_label, "threads": self.threads, "fallback": True,
+                      "message": "NVIDIA GPU initialization or memory failed. Retrying once on CPU…"})
+                continue
+            self._check_cancelled()
+            if backend == "cuda" and not observed_cuda:
+                self.actual_backend = "cpu"
+                emit({"kind": "status", "phase": "transcribing", "backend": "cpu",
+                      "model": model_label, "threads": self.threads,
+                      "message": "The runtime used CPU; NVIDIA acceleration was unavailable."})
+            return
 
     def _probe(self, source: Path) -> int:
         output = self._run_process([
@@ -277,7 +381,8 @@ class Transcriber:
         return progress
 
     @staticmethod
-    def _inference_progress(emit: Callable[[dict], None]) -> Callable[[str, str], None]:
+    def _inference_progress(emit: Callable[[dict], None], backend: str = "cpu",
+                            model_label: str = "Large-v3", threads: int = 2) -> Callable[[str, str], None]:
         last = -1
 
         def progress(_stream: str, line: str) -> None:
@@ -287,7 +392,9 @@ class Transcriber:
                 percent = min(99, max(0, int(float(match.group(1)))))
                 if percent > last:
                     last = percent
-                    emit({"kind": "progress", "phase": "transcribing", "message": "Transcribing on CPU…", "percent": percent})
+                    emit({"kind": "progress", "phase": "transcribing", "backend": backend,
+                          "model": model_label, "threads": threads,
+                          "message": "Transcribing with NVIDIA GPU acceleration…" if backend == "cuda" else "Transcribing on CPU…", "percent": percent})
         return progress
 
     def _run_process(self, args: list[str], phase: str,
@@ -322,7 +429,7 @@ class Transcriber:
                 process = subprocess.Popen(
                     args, shell=False, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
                     stderr=subprocess.PIPE, text=True, encoding="utf-8", errors="replace",
-                    bufsize=1, cwd=self.runtime_dir, creationflags=flags, startupinfo=startup,
+                    bufsize=1, cwd=Path(args[0]).resolve().parent, creationflags=flags, startupinfo=startup,
                 )
                 self._process = process
             for name, pipe in (("stdout", process.stdout), ("stderr", process.stderr)):

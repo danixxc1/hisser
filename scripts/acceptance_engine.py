@@ -1,4 +1,4 @@
-"""Reproducible actual CPU/model QA using explicitly synthetic Windows speech.
+"""Reproducible actual local-engine QA using synthetic Windows speech.
 
 Use --short, --failures, or --long. Long QA processes the complete 30+ minute
 recording; it never substitutes generated timestamps for recognition evidence.
@@ -26,11 +26,14 @@ if hasattr(sys.stdout, "reconfigure"):
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 from hisser.engine import Cancelled, Transcriber, TranscriptionError
+from hisser.models import model_for_filename
 
 QA = ROOT / "qa" / "engine-integration"
 INPUTS = QA / "José Mañalac - synthetic fixtures"
 MODEL = Path(os.environ.get("LOCALAPPDATA", Path.home() / "AppData/Local")) / "Hisser/models/ggml-large-v3-q5_0.bin"
 RUNTIME = ROOT / "runtime"
+PROCESSING = "cpu"
+THREADS = 2
 PWSH = Path(shutil.which("powershell.exe") or shutil.which("pwsh") or
             Path(os.environ.get("SystemRoot", "C:/Windows")) / "System32/WindowsPowerShell/v1.0/powershell.exe")
 VOICE = "Microsoft Zira Desktop"
@@ -81,7 +84,9 @@ def prepare_short():
 
 
 def measure_job(label: str, source: Path, cancel_at_inference: bool = False, language: str = "en"):
-    engine = Transcriber(RUNTIME, MODEL, QA / "jobs")
+    descriptor = model_for_filename(MODEL.name)
+    engine = Transcriber(RUNTIME, MODEL, QA / "jobs", processing=PROCESSING,
+                         threads=THREADS, model_spec=descriptor)
     stop = threading.Event()
     samples = {"peak_child_rss_bytes": 0, "peak_whisper_rss_bytes": 0, "peak_child_total_rss_bytes": 0,
                "peak_parent_rss_bytes": 0, "sample_interval_seconds": 0.2}
@@ -112,7 +117,7 @@ def measure_job(label: str, source: Path, cancel_at_inference: bool = False, lan
                             samples["peak_whisper_rss_bytes"] = max(samples["peak_whisper_rss_bytes"], rss)
                             if first_inference is None:
                                 first_inference = time.monotonic()
-                            if cancel_at_inference and not cancelled and time.monotonic() - first_inference > 2:
+                            if cancel_at_inference and not cancelled and time.monotonic() - first_inference > 0.5:
                                 cancelled = True
                                 engine.cancel()
                     except (psutil.NoSuchProcess, psutil.AccessDenied):
@@ -149,8 +154,12 @@ def measure_job(label: str, source: Path, cancel_at_inference: bool = False, lan
             sampler.join(timeout=2)
     report = {
         "label": label, "synthetic": True, "source": str(source),
-        "engine": "whisper.cpp b5454 / ggml-large-v3-q5_0", "threads": 2, "processors": 1,
-        "gpu": False, "language_requested": language, "wall_seconds": round(time.monotonic() - started, 3),
+        "engine": result.get("engine") if result else engine._engine_label(engine.actual_backend),
+        "model_id": descriptor.id if descriptor else None, "model_file": MODEL.name,
+        "model_size_bytes": MODEL.stat().st_size, "model_expected_sha256": descriptor.sha256 if descriptor else None,
+        "threads": THREADS, "processors": 1, "processing_requested": PROCESSING,
+        "gpu": engine.actual_backend == "cuda", "cancel_delay_after_child_seen_seconds": 0.5 if cancel_at_inference else None,
+        "language_requested": language, "wall_seconds": round(time.monotonic() - started, 3),
         "completed_at_utc": datetime.now(timezone.utc).isoformat(), "memory": samples,
         "error": error, "temp_clean": not list((QA / "jobs").glob("*")), "last_event": last_progress,
         "duration_ms": result["duration_ms"] if result else None,
@@ -186,6 +195,18 @@ def prepare_long(short: Path):
     late_raw = INPUTS / "Late checkpoint speech.wav"
     synthesize(late_raw, LATE_TEXT)
     long_path = INPUTS / "Película sintética - leading silence then speech after minute 30.flac"
+    if long_path.is_file():
+        probe = child_run([str(RUNTIME / "ffprobe.exe"), "-v", "error", "-show_entries", "format=duration",
+                           "-of", "json", str(long_path)])
+        duration_ms = round(float(json.loads(probe.stdout)["format"]["duration"]) * 1000)
+        manifest_path = QA / "fixture-manifest.json"
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        manifest.update({"long_path": str(long_path), "late_speech_start_ms": 1_830_000,
+                         "long_duration_ms": duration_ms, "existing_long_fixture_reused": True,
+                         "long_fixture_structure": "Existing controlled fixture: exact leading PCM zero samples until 30:30, then known late speech.",
+                         "optimization_under_test": "Full decode and complete PCM scan; only exact-zero outer silence is trimmed. Real late speech recognition and original timestamps must pass."})
+        write_json(manifest_path, manifest)
+        return long_path
     converted = []
     for index, source in enumerate((late_raw,)):
         output = INPUTS / f"setup-{index}-16k.wav"
@@ -239,7 +260,7 @@ def failures(short):
     ):
         error = None
         try:
-            Transcriber(RUNTIME, model, QA / "jobs").run(source, "en", lambda event: None)
+            Transcriber(RUNTIME, model, QA / "jobs", processing=PROCESSING, threads=THREADS).run(source, "en", lambda event: None)
         except TranscriptionError as exc:
             error = str(exc)
         accepted = error is not None and expected in error and not list((QA / "jobs").glob("*"))
@@ -253,14 +274,20 @@ def failures(short):
 
 
 def main():
-    global QA, INPUTS, MODEL, RUNTIME, PWSH, VOICE
+    global QA, INPUTS, MODEL, RUNTIME, PWSH, VOICE, PROCESSING, THREADS
     parser = argparse.ArgumentParser()
     parser.add_argument("--runtime-directory", type=Path, default=RUNTIME,
                         help="Folder containing whisper-cli.exe, ffmpeg.exe and ffprobe.exe.")
     parser.add_argument("--model", type=Path, default=MODEL,
-                        help="Path to the verified ggml-large-v3-q5_0.bin model.")
+                        help="Path to a verified local GGML model; the catalog descriptor selects actual model metadata.")
     parser.add_argument("--output-directory", type=Path, default=QA,
                         help="Local-only synthetic fixtures and diagnostic reports.")
+    parser.add_argument("--fixtures-directory", type=Path,
+                        help="Reuse a dedicated existing synthetic fixture folder; reports still use --output-directory.")
+    parser.add_argument("--processing", choices=("cpu", "auto"), default="cpu",
+                        help="CPU (default), or Automatic GPU processing with the app's normal CPU fallback.")
+    parser.add_argument("--threads", type=int, choices=range(1, 33), default=2,
+                        help="Inference CPU threads, 1 through 32 (default: 2).")
     parser.add_argument("--powershell", type=Path, default=PWSH,
                         help="Windows PowerShell or pwsh executable with System.Speech available.")
     parser.add_argument("--voice", default=VOICE,
@@ -268,16 +295,18 @@ def main():
     parser.add_argument("--short", action="store_true")
     parser.add_argument("--long", action="store_true")
     parser.add_argument("--failures", action="store_true")
-    parser.add_argument("--auto", action="store_true")
+    parser.add_argument("--auto", action="store_true", help="Also test automatic language detection.")
     args = parser.parse_args()
     if not any((args.short, args.long, args.failures, args.auto)):
-        parser.error("Choose --short, --auto, --failures or --long. These are actual CPU/model tests.")
+        parser.error("Choose --short, --auto, --failures or --long. These are actual local model tests.")
     QA = args.output_directory.expanduser().resolve()
-    INPUTS = QA / "José Mañalac - synthetic fixtures"
+    INPUTS = args.fixtures_directory.expanduser().resolve() if args.fixtures_directory else QA / "José Mañalac - synthetic fixtures"
     MODEL = args.model.expanduser().resolve()
     RUNTIME = args.runtime_directory.expanduser().resolve()
     PWSH = args.powershell.expanduser().resolve()
     VOICE = args.voice
+    PROCESSING = args.processing
+    THREADS = args.threads
     if os.name != "nt":
         parser.error("Actual speech acceptance requires Windows and System.Speech.")
     if not PWSH.is_file() or not MODEL.is_file():

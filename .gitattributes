@@ -7,3 +7,5 @@
 *.ps1 text eol=lf
 *.png binary
 *.ico binary
+# Preserve the original bundled vendor license, including upstream spacing.
+runtime/licenses/NVIDIA-CUDA-cuBLAS-LICENSE.txt -whitespace

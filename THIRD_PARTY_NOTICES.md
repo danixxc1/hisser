@@ -4,8 +4,9 @@ Hisser's source repository does not include model weights or executable runtime 
 
 | Component | Purpose | Upstream license/source |
 | --- | --- | --- |
-| whisper.cpp v1.9.5 / b5454 | CPU speech recognition | [MIT](https://github.com/ggml-org/whisper.cpp/blob/b5454/LICENSE) |
-| Whisper large-v3, GGML Q5_0 | Multilingual recognition model | [OpenAI Whisper MIT](https://github.com/openai/whisper/blob/main/LICENSE), [GGML distribution](https://huggingface.co/ggerganov/whisper.cpp) |
+| whisper.cpp v1.9.5 / b5454 | CPU and NVIDIA CUDA speech recognition | [MIT](https://github.com/ggml-org/whisper.cpp/blob/b5454/LICENSE) |
+| Whisper large-v3 / large-v3-turbo, GGML Q5_0 | Selected multilingual recognition model | [OpenAI Whisper MIT](https://github.com/openai/whisper/blob/main/LICENSE), [GGML distribution](https://huggingface.co/ggerganov/whisper.cpp) |
+| NVIDIA CUDA 11.8 / cuBLAS 11.11.3.6 | Optional GPU runtime libraries | [CUDA toolkit license](https://docs.nvidia.com/cuda/archive/11.8.0/eula/index.html); see bundled NVIDIA-CUDA-cuBLAS-LICENSE.txt |
 | FFmpeg / ffprobe | Media inspection and decoding | The verified Gyan full build is GPLv3; see bundled build configuration and [FFmpeg license](https://ffmpeg.org/legal.html) |
 | Microsoft Visual C++ / OpenMP DLLs | whisper.cpp dependencies | Microsoft's applicable runtime terms; copied from the existing signed Windows installation for this personal app |
 | Python / Tk | Packaged language and native UI runtime | [Python license](https://docs.python.org/3/license.html), [Tcl/Tk license](https://www.tcl.tk/software/tcltk/license.html) |
