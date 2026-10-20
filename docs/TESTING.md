@@ -8,7 +8,7 @@ From a clean checkout in PowerShell:
 python -m venv .venv
 .\.venv\Scripts\python.exe -m pip install -r requirements-lock.txt
 .\.venv\Scripts\python.exe -m pip check
-.\.venv\Scripts\python.exe -m pytest -q --basetemp=qa/test-run
+.\.venv\Scripts\python.exe -m pytest -q --basetemp=.pytest-work
 ```
 
 Pytest clears its selected `--basetemp` directory at the next run; use only a disposable test path there.

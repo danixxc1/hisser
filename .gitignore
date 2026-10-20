@@ -6,6 +6,7 @@ runtime/*.dll
 downloads/
 __pycache__/
 .pytest_cache/
+.pytest-work/
 *.pyc
 qa/
 .impeccable/

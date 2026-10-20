@@ -82,7 +82,7 @@ Close Hisser, delete the portable folder, then delete its desktop shortcut to re
 
 ```powershell
 .\.venv\Scripts\python.exe -m pip check
-.\.venv\Scripts\python.exe -m pytest -q --basetemp=qa\check
+.\.venv\Scripts\python.exe -m pytest -q --basetemp=.pytest-work
 ```
 
 The automated tests do not download a model. Windows CI runs the same suite. [Testing details](docs/TESTING.md) explain synthetic fixtures and optional actual-model checks. Local reports, media, models, binaries, credentials and settings are excluded from Git.
