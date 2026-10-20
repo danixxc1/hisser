@@ -247,6 +247,8 @@ def collect_entries(source: Path, version: str, legal: Path,
         lowered = relative.lower()
         if relative in EXCLUDED_ASSETS:
             continue
+        if lowered == "runtime/cuda/cudart32_110.dll":
+            continue  # The official x64 archive also carries an unused x86 DLL.
         if lowered == "runtime/provenance.json":
             continue  # Original includes local paths and an obsolete comparison model.
         if lowered.startswith("runtime/licenses/"):
@@ -287,7 +289,7 @@ def collect_entries(source: Path, version: str, legal: Path,
     if not legal_entries:
         raise ReleaseError("The reviewed redistribution license directory is empty")
     entries += legal_entries
-    for name in ("USER_GUIDE.md", "THIRD_PARTY_NOTICES.md"):
+    for name in ("USER_GUIDE.md", "THIRD_PARTY_NOTICES.md", "docs/DISTRIBUTION.md"):
         entries.append(Entry(name, content=public_text(project / name)))
     if (project / "LICENSE").is_file():
         entries.append(Entry("LICENSE", content=public_text(project / "LICENSE")))

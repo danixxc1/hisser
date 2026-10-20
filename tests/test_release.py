@@ -62,6 +62,7 @@ def inputs(tmp_path, monkeypatch):
     put(app, "USER_GUIDE.md", b"stale private local guide")
     put(project, "USER_GUIDE.md", b"Public user guide")
     put(project, "THIRD_PARTY_NOTICES.md", b"Public component notices")
+    put(project, "docs/DISTRIBUTION.md", b"Public redistribution requirements")
     put(project, "LICENSE", b"MIT License")
     put(legal, "component-license.txt", b"Public component license")
     return app, project, legal, model
@@ -88,6 +89,7 @@ def test_archive_contains_only_clean_portable_data_and_verified_bytes(inputs, tm
         profile = json.loads(bundle.read("Hisser/data/transcription-profile.json"))
         assert profile == {"model_id": "large-v3-q5_0", "cpu_threads": 6}
         assert bundle.read("Hisser/USER_GUIDE.md") == b"Public user guide"
+        assert bundle.read("Hisser/docs/DISTRIBUTION.md") == b"Public redistribution requirements"
         for name in names:
             if name.endswith((".json", ".txt", ".md")):
                 assert b"Someone" not in bundle.read(name)
@@ -116,6 +118,12 @@ def test_unknown_program_file_requires_explicit_review(inputs):
     put(inputs[0], "_internal/private-notes.txt", b"private")
     with pytest.raises(release.ReleaseError, match="Unrecognized program file"):
         collect(inputs)
+
+
+def test_unused_x86_cuda_runtime_is_excluded_from_x64_release(inputs):
+    put(inputs[0], "_internal/runtime/cuda/cudart32_110.dll", b"unused x86 library")
+    entries, _ = collect(inputs)
+    assert not any("cudart32" in entry.relative for entry in entries)
 
 
 def test_cannot_disguise_an_unknown_model_with_metadata(inputs):

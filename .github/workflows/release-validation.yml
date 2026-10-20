@@ -1,0 +1,86 @@
+name: Validate downloadable Windows app
+
+on:
+  workflow_dispatch:
+    inputs:
+      asset_id:
+        description: GitHub release asset ID of the candidate app ZIP
+        required: true
+        type: string
+      sha256:
+        description: Expected SHA-256 of the candidate ZIP
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  portable:
+    runs-on: windows-2025
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.14'
+          cache: pip
+      - name: Install locked validation dependencies
+        run: python -m pip install -r requirements-lock.txt
+      - name: Download the checksum-identified release candidate
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ASSET_ID: ${{ inputs.asset_id }}
+          EXPECTED_SHA256: ${{ inputs.sha256 }}
+          REPOSITORY: ${{ github.repository }}
+        shell: python
+        run: |
+          import hashlib, os, pathlib, re, urllib.parse, urllib.request
+          asset = os.environ['ASSET_ID']
+          expected = os.environ['EXPECTED_SHA256'].lower()
+          if not re.fullmatch(r'[0-9]{1,19}', asset) or not 0 < int(asset) <= 2**63-1 or not re.fullmatch(r'[a-f0-9]{64}', expected):
+              raise SystemExit('Asset ID and SHA-256 must be complete identifiers.')
+          class SafeRedirect(urllib.request.HTTPRedirectHandler):
+              def redirect_request(self, req, fp, code, msg, headers, newurl):
+                  parsed = urllib.parse.urlsplit(newurl)
+                  if parsed.scheme != 'https' or not parsed.hostname or not (parsed.hostname == 'github.com' or parsed.hostname.endswith('.githubusercontent.com')):
+                      raise RuntimeError('Unexpected release download redirect.')
+                  redirected = super().redirect_request(req, fp, code, msg, headers, newurl)
+                  for header_set in (redirected.headers, redirected.unredirected_hdrs):
+                      for key in list(header_set):
+                          if key.lower() == 'authorization':
+                              del header_set[key]
+                  return redirected
+          request = urllib.request.Request(
+              'https://api.github.com/repos/' + os.environ['REPOSITORY'] + '/releases/assets/' + asset,
+              headers={'Authorization': 'Bearer ' + os.environ['GH_TOKEN'], 'Accept': 'application/octet-stream',
+                       'X-GitHub-Api-Version': '2022-11-28', 'User-Agent': 'Hisser-release-validation'})
+          folder = pathlib.Path('qa/release-candidate')
+          folder.mkdir(parents=True)
+          digest, total = hashlib.sha256(), 0
+          with urllib.request.build_opener(SafeRedirect).open(request, timeout=120) as response, (folder/'candidate.zip').open('xb') as destination:
+              while chunk := response.read(1024 * 1024):
+                  total += len(chunk)
+                  if total >= 2 * 1024**3:
+                      raise RuntimeError('Candidate exceeds the GitHub release asset limit.')
+                  digest.update(chunk)
+                  destination.write(chunk)
+          if digest.hexdigest() != expected:
+              raise RuntimeError('Downloaded candidate does not match the expected SHA-256.')
+          print('Candidate download checksum verified.')
+      - name: Verify and exercise an extracted copy without an NVIDIA GPU
+        env:
+          EXPECTED_SHA256: ${{ inputs.sha256 }}
+        shell: pwsh
+        run: |
+          python scripts/verify-release.py --archive qa/release-candidate/candidate.zip --sha256 $env:EXPECTED_SHA256 --output-directory 'qa/release-validation/José & Niño' --exercise --processing cpu auto --require-auto-backend cpu --report qa/release-validation-report.json
+          if ($LASTEXITCODE -ne 0) { throw 'The downloadable app failed clean-machine validation.' }
+      - name: Upload the sanitized validation result
+        uses: actions/upload-artifact@v7
+        with:
+          name: hisser-download-validation
+          path: qa/release-validation-report.json
+          if-no-files-found: error
+          retention-days: 30
