@@ -1,0 +1,32 @@
+name: Build public distribution runtime
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  runtime:
+    runs-on: windows-2025
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: Ensure MSYS2 build tools are present
+        shell: pwsh
+        run: |
+          & 'C:\msys64\usr\bin\bash.exe' -lc 'pacman --noconfirm --needed -S make diffutils'
+          if ($LASTEXITCODE -ne 0) { throw 'MSYS2 build-tool preparation failed.' }
+      - name: Build FFmpeg and collect licensed Visual Studio redistributables
+        shell: pwsh
+        run: .\scripts\build-distribution-runtime.ps1
+      - name: Upload reviewed runtime and corresponding source inputs
+        uses: actions/upload-artifact@v7
+        with:
+          name: hisser-distribution-runtime
+          path: qa/distribution-runtime/
+          if-no-files-found: error
+          retention-days: 14
+          compression-level: 6
