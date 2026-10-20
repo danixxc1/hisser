@@ -1,6 +1,10 @@
 # Using Hisser
 
-Open **Hisser.exe** in your portable **Hiss** folder, or double-click the **Hisser** desktop shortcut. No installation or Python activation is needed. Keep the entire folder together when moving it; recreate the shortcut afterward.
+Download the Windows x64 ZIP from the project's [GitHub Releases](https://github.com/danixxc1/hisser/releases/latest), choose **Extract All…**, then open **Hisser.exe** in the extracted **Hisser** folder. The repository's **Code → Download ZIP** is developer source, not the ready-to-run app.
+
+No installation, administrator access, Python, Git, FFmpeg setup, API key or cloud account is needed for normal use. Keep the entire folder together when moving it. You can create a desktop shortcut to the extracted EXE; recreate it after moving the folder. Run Hisser from a folder you can write to, such as Documents.
+
+Windows 11 x64 with 16 GB RAM was tested. Windows 10/11 x64 is the release target; ARM64 and 32-bit Windows are not tested. Allow 8 GB free disk space for the ZIP, extraction and working space. A compatible NVIDIA GPU can accelerate processing through its existing driver; CPU processing is available too.
 
 1. Select **Choose file…** and pick a local audio or video file.
 2. Choose **Auto-detect**, **Tagalog / Filipino**, **English**, or another language.
@@ -12,9 +16,21 @@ The source stays unchanged. Transcription uses the original language, without tr
 
 **Automatic** uses the optional GPU runtime when available. If GPU initialization or GPU memory fails, Hisser tells you and retries once on CPU. Cancelling stops the job without retrying. The progress area shows the model and processing actually used. A CPU-only package works without an NVIDIA GPU. No driver or GPU toolkit is installed.
 
+## Download verification
+
+Download the matching **.zip.sha256** file from the same GitHub release as the app ZIP. In PowerShell, use the actual path of your downloaded ZIP:
+
+```powershell
+Get-FileHash -LiteralPath "$env:USERPROFILE\Downloads\Hisser-1.1.0-windows-x64.zip" -Algorithm SHA256
+```
+
+Compare the complete hash with the entry for that ZIP in its **.sha256** file. The characters must match; letter case does not matter. A matching hash checks that the file matches the published release, rather than proving the app is safe. If it differs, do not run the download; download it again from the release page.
+
+Hisser is not code-signed. Windows may warn about an unfamiliar publisher or download. Verify the release origin and checksum, keep Windows security protections enabled, and only run the app if you trust its source.
+
 ## Working space and accuracy
 
-The prepared portable app retains one model and stays **below 4 GB**. Decoded audio needs about **115 MB per hour** in additional temporary space. Silence trimming may briefly need another copy. Job files are removed after completion, failure or cancellation. Recognition needs several GB of RAM and can take longer than the recording, especially on CPU; close heavy applications if memory is tight.
+The current portable app is approximately **2.86 GB**, retains one model and stays **below 4 GB**. Decoded audio needs about **115 MB per hour** in additional temporary space. Silence trimming may briefly need another copy. Job files are removed after completion, failure or cancellation. Recognition needs several GB of RAM and can take longer than the recording, especially on CPU; close heavy applications if memory is tight.
 
 Start with a short sample. Synthetic English checks do not establish film or Tagalog accuracy. Names, mixed languages, music and overlapping dialogue need review against the recording. Unsaved transcripts live only in the current window; save before closing or choosing another file.
 
@@ -31,10 +47,12 @@ The default remains the large-v3 model. Turbo is a smaller comparison option for
 
 ## Remove Hisser
 
-Close the app, delete its entire portable **Hiss** folder, then delete the **Hisser** desktop shortcut. The EXE, runtime, downloaded model, settings, cache and temporary job files all live in that folder. There is no Windows app registration.
+Close the app, delete its entire extracted portable folder, then delete any **Hisser** desktop shortcut you created. The EXE, runtime, downloaded model, settings, cache and temporary job files all live in that folder. There is no Windows app registration.
 
-The development project, source recordings and transcripts saved outside the app folder stay untouched. Empty the Recycle Bin to reclaim space. Global Python, Mama, drivers and other apps are not changed. Windows manages its own shared history/security records.
+The development project, source recordings and transcripts saved outside the app folder stay untouched. Delete any downloaded release ZIP too if you no longer need it, and empty the Recycle Bin to reclaim space. Drivers and other apps are not changed. Windows manages its own shared history/security records.
 
 ## Update or repair
 
-The model, its verification metadata, selected transcription profile and settings live in `data` beside the EXE. Developer packaging scripts preserve that directory while updating program files. Keep one model there. See README.md and scripts/MAINTENANCE.md in the source project. Normal daily use only requires the EXE or shortcut.
+Close Hisser, download the new release and extract it to a new folder. Check its checksum, then run the new EXE and test a short recording before deleting the old folder. Keep your saved transcripts outside the app folder. Each release contains its own verified model and profile; avoid mixing `_internal` or `data\models` from different releases. Recreate your desktop shortcut to point to the new EXE.
+
+The model, verification metadata, selected transcription profile and settings live in `data` beside the EXE. Maintainers using the developer packaging scripts can preserve that directory during an update; see README.md and scripts/MAINTENANCE.md in the source project. Normal daily use only requires the EXE or shortcut.

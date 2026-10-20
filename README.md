@@ -1,8 +1,24 @@
 # Hisser
 
-A lightweight, portable Windows app for transcribing local audio and video with whisper.cpp. Select a file, choose its language, transcribe, preview or copy the text, then save **PDF, SRT, TXT, VTT or JSON**. Multiple exports reuse one canonical timed transcript.
+A portable Windows app for transcribing local audio and video with whisper.cpp. Select a file, choose its language, transcribe, preview or copy the text, then save **PDF, SRT, TXT, VTT or JSON**. Multiple exports reuse one canonical timed transcript.
 
 Hisser runs locally after setup. It needs no cloud account, API key, daily quota or recording-length limit. The app transcribes the original language; it does not translate or generate papers.
+
+## Download and run
+
+**[Download the latest portable app from Releases](https://github.com/danixxc1/hisser/releases/latest).** Open the release's **Assets** section and download **Hisser-1.1.0-windows-x64.zip** and its **Hisser-1.1.0-windows-x64.zip.sha256** file. If a newer version is listed, choose that version's Windows x64 ZIP and matching checksum.
+
+1. Right-click the downloaded ZIP and choose **Extract All…**. Choose a writable location, such as your Documents folder.
+2. Open the extracted **Hisser** folder and double-click **Hisser.exe**.
+3. Keep **Hisser.exe**, **_internal** and **data** together. Run the extracted copy, rather than opening the EXE inside the ZIP.
+
+The release includes the app, recognition model and required libraries. You do **not** need Python, Git, FFmpeg, an API key, an installer or administrator access for normal use. **Code → Download ZIP** downloads the developer source and will not give you the ready-to-run app.
+
+Use **Windows 10 or 11, 64-bit x64**. Windows 11 with 16 GB RAM and an RTX 3050 Laptop GPU was tested; 16 GB RAM is recommended. Allow **8 GB free disk space** for the download, extracted app and working space. The extracted app is approximately **2.86 GB**, with extra temporary space needed while processing recordings. ARM64 and 32-bit Windows are not tested.
+
+Leave **Processing** on **Automatic** to use an available compatible NVIDIA GPU and its existing driver. CPU processing is available when acceleration cannot be used. A GPU toolkit or new driver is not installed; CPU transcription can take longer than the recording.
+
+The EXE is **not code-signed**, so Windows may show a warning. Check that the download came from this repository's release and compare its SHA-256 with the release checksum before deciding whether to run it. Do not disable Windows security protections. See [the user guide](USER_GUIDE.md#download-verification) for the check.
 
 ## Features
 
@@ -19,10 +35,10 @@ Common input containers include MP4, MKV, MOV, WebM, AVI, MP3, WAV, M4A, FLAC an
 
 ## Use the portable app
 
-Open **Hisser.exe** inside the prepared portable folder, or use the desktop shortcut created by the packaging script. Keep the entire folder together:
+Open **Hisser.exe** inside the extracted portable folder. You can create your own desktop shortcut to it. Keep the entire folder together:
 
 ```text
-Hiss/
+Hisser/
   Hisser.exe
   _internal/           # Python/Tk, app assets, FFmpeg and whisper.cpp
   data/
@@ -34,7 +50,7 @@ Hiss/
   portable.json
 ```
 
-No installer, Windows app registration or Python activation is needed for daily use. The repository contains source, not a prebuilt app or model; build it using the steps below.
+No installer, Windows app registration or Python activation is needed for daily use. Ready-to-run packages are attached to [GitHub Releases](https://github.com/danixxc1/hisser/releases); the repository's source tree does not contain executable binaries or models.
 
 1. Select **Choose file…** and a local recording.
 2. Leave **Auto-detect** or select **Tagalog / Filipino**, **English**, or another language.
@@ -42,7 +58,7 @@ No installer, Windows app registration or Python activation is needed for daily 
 4. Review the words, select text or use **Copy text**.
 5. Choose formats and **Save transcript…**. One format uses Save As; several use a folder. Recognition is not repeated for exports.
 
-See [the user guide](USER_GUIDE.md) for errors, storage and removal.
+See [the user guide](USER_GUIDE.md) for errors, updates, storage and removal.
 
 ## Build from source
 
@@ -71,6 +87,8 @@ py -3.14 -m venv .venv
 Choose another folder with `-Destination 'D:\Tools\Hiss'`. `-WhatIf` previews deployment without changes. Packaging moves the single prepared model/data directory into the portable folder, checks the EXE, exports and relative data paths, and restores the previous copy on failure when possible. It rejects unrecognized destination folders and linked paths. Personal transcripts should be saved outside the app folder.
 
 For a CPU-only package, prepare with `--backend cpu` and build with `-Backend cpu`; CUDA DLLs are excluded. For repeat CUDA builds, preserve portable `data` and use `prepare_runtime.py --backend cuda --skip-model`, or restore the complete verified `_internal\runtime` from the portable app to avoid another model copy. Read [maintenance instructions](scripts/MAINTENANCE.md) before an update. `install.ps1` is a compatibility wrapper for portable packaging; it does not register an app.
+
+Public releases use a separately reviewed redistribution runtime, including a native-only LGPL FFmpeg build and Microsoft DLLs from Visual Studio's redistribution directory. Do not publish an arbitrary FFmpeg build from PATH or DLLs copied from a Windows system folder. See [distribution requirements](docs/DISTRIBUTION.md) and [the release checklist](docs/RELEASING.md).
 
 ## Model and storage
 
@@ -101,4 +119,6 @@ Preparation checks pinned upstream hashes and requests Windows Security scans; l
 
 `hisser/` contains the UI, engine and exporters. `tests/` holds behavior tests; `scripts/` prepares, builds and updates the portable app. Runtime/model weights and large QA files are generated locally.
 
-See [third-party notices](THIRD_PARTY_NOTICES.md) and bundled notices for dependencies. No project-wide open-source license has been selected for Hisser's own source; the repository is maintained privately.
+Hisser's own source is available under the [MIT License](LICENSE). Bundled models and third-party software retain their own licenses; see [third-party notices](THIRD_PARTY_NOTICES.md) and the notices included with the portable app. The MIT license does not replace those dependency licenses.
+
+Maintainers: see [the release checklist](docs/RELEASING.md) before publishing a portable download. Do not upload your everyday app folder with personal settings, recordings or transcripts.

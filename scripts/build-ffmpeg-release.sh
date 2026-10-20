@@ -8,15 +8,20 @@ if [[ $# -ne 3 ]]; then
   exit 2
 fi
 
-source_directory=$(cygpath -u "$1")
-build_directory=$(cygpath -u "$2")
-output_directory=$(cygpath -u "$3")
+# The hosted runner also has native MinGW make and Git Bash on PATH. Use one
+# MSYS2 POSIX environment, while preserving MSVC's linker ahead of coreutils.
+msvc_directory=$(/usr/bin/dirname "$(command -v cl.exe)")
+export PATH="$msvc_directory:/usr/bin:$PATH"
+source_directory=$(/usr/bin/cygpath -u "$1")
+build_directory=$(/usr/bin/cygpath -u "$2")
+output_directory=$(/usr/bin/cygpath -u "$3")
 mkdir -p "$build_directory" "$output_directory"
 cd "$build_directory"
 
-command -v cl.exe
-command -v link.exe
-command -v make
+printf 'Resolved build tools:\n'
+command -v cl.exe link.exe bash make
+/usr/bin/make --version
+/usr/bin/bash --version
 
 configure_options=(
   --toolchain=msvc
@@ -35,8 +40,8 @@ configure_options=(
   --disable-shared
 )
 
-bash "$source_directory/configure" "${configure_options[@]}"
-make -j "${NUMBER_OF_PROCESSORS:-2}"
+/usr/bin/bash "$source_directory/configure" "${configure_options[@]}"
+/usr/bin/make SHELL=/usr/bin/bash -j "${NUMBER_OF_PROCESSORS:-2}"
 cp ffmpeg.exe ffprobe.exe "$output_directory/"
 
 # Keep the exact generated configuration, source license and build instructions.

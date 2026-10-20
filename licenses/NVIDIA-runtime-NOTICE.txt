@@ -1,0 +1,19 @@
+NVIDIA CUDA runtime components supplied with Hisser
+
+Copyright NVIDIA Corporation. All rights reserved.
+
+The NVIDIA CUDA 11.8 runtime, cuBLAS/cuBLASLt and NVRTC/NVRTC-builtins
+libraries in this app folder are supplied for Hisser's GPU processing.
+Their use is subject to the complete NVIDIA Software License Agreement
+and CUDA Supplement in NVIDIA-CUDA-cuBLAS-LICENSE.txt.
+
+These components retain NVIDIA's intellectual property rights and license
+restrictions. Hisser's MIT source license does not apply to them. They
+are not supplied as a standalone SDK or library package. Preserve their
+copyright notices and applicable license terms when sharing Hisser.
+
+Hisser is an independent application. NVIDIA does not sponsor or endorse it.
+No NVIDIA GPU driver or CUDA development toolkit is included or installed.
+
+Official agreement and list of redistributable components:
+https://docs.nvidia.com/cuda/archive/11.8.0/eula/index.html
