@@ -21,7 +21,14 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'MSYS2 build-tool preparation failed.' }
       - name: Build FFmpeg and collect licensed Visual Studio redistributables
         shell: pwsh
-        run: .\scripts\build-distribution-runtime.ps1
+        run: |
+          try {
+            .\scripts\build-distribution-runtime.ps1
+          } catch {
+            Write-Host ($_ | Format-List * -Force | Out-String)
+            Write-Host $_.ScriptStackTrace
+            throw
+          }
       - name: Upload reviewed runtime and corresponding source inputs
         uses: actions/upload-artifact@v7
         with:

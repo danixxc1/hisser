@@ -14,11 +14,28 @@ $OutputDirectory = [IO.Path]::GetFullPath($OutputDirectory)
 if (Test-Path -LiteralPath $OutputDirectory) { throw 'Choose a fresh output directory.' }
 $SourceCommit = '946fcce07b6dcd0331c8cc609192aeff5e1924f8'
 $SourceUrl = 'https://codeload.github.com/FFmpeg/FFmpeg/tar.gz/' + $SourceCommit
-$RedistLicenseUrl = 'https://learn.microsoft.com/en-us/visualstudio/releases/2022/redistribution'
 $VsWhere = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio\Installer\vswhere.exe'
-if (-not (Test-Path -LiteralPath $VsWhere)) { throw 'Visual Studio 2022 with the x64 C++ tools is required.' }
-$VsInstallation = (& $VsWhere -latest -products Microsoft.VisualStudio.Product.Enterprise -version '[17.0,18.0)' -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath).Trim()
-if ($LASTEXITCODE -ne 0 -or -not $VsInstallation) { throw 'A licensed Visual Studio 2022 Enterprise C++ installation was not found.' }
+if (-not (Test-Path -LiteralPath $VsWhere)) { throw 'Visual Studio Installer vswhere.exe is required on the hosted runner.' }
+$VsInventoryLines = @(& $VsWhere -all -products '*' -format json -utf8)
+if ($LASTEXITCODE -ne 0) { throw "vswhere failed with exit code $LASTEXITCODE" }
+$VsInventoryText = [string]::Join([Environment]::NewLine, $VsInventoryLines)
+Write-Host 'Visual Studio installation inventory (hosted-runner diagnostics):'
+Write-Host $VsInventoryText
+if ([string]::IsNullOrWhiteSpace($VsInventoryText)) { throw 'vswhere returned no installation inventory.' }
+$VsInstallations = @($VsInventoryText | ConvertFrom-Json -ErrorAction Stop)
+$VsRecord = $VsInstallations | Where-Object {
+    $_.productId -eq 'Microsoft.VisualStudio.Product.Enterprise' -and
+    $_.isComplete -and -not $_.isPrerelease -and
+    ([version]$_.installationVersion).Major -in @(17, 18) -and
+    (Test-Path -LiteralPath (Join-Path $_.installationPath 'VC\Redist\MSVC')) -and
+    (Test-Path -LiteralPath (Join-Path $_.installationPath 'VC\Tools\MSVC'))
+} | Sort-Object { [version]$_.installationVersion } -Descending | Select-Object -First 1
+if (-not $VsRecord) { throw 'No complete, stable Visual Studio 2022/2026 Enterprise C++ installation with redistribution files was found. See the inventory above.' }
+$VsInstallation = [string]$VsRecord.installationPath
+$VsYear = if (([version]$VsRecord.installationVersion).Major -eq 18) { '2026' } else { '2022' }
+$VsLabel = "Visual Studio $VsYear Enterprise"
+$RedistLicenseUrl = "https://learn.microsoft.com/en-us/visualstudio/releases/$VsYear/redistribution"
+Write-Host "Selected $VsLabel version $($VsRecord.installationVersion)"
 $RedistRoot = Join-Path $VsInstallation 'VC\Redist\MSVC'
 $RedistVersion = Get-ChildItem -LiteralPath $RedistRoot -Directory |
     Where-Object { $_.Name -match '^\d+\.\d+\.\d+(\.\d+)?$' } |
@@ -50,7 +67,7 @@ foreach ($Name in @('msvcp140.dll', 'vcruntime140.dll', 'vcruntime140_1.dll', 'v
         size = (Get-Item -LiteralPath $Target).Length
         sha256 = (Get-FileHash -LiteralPath $Target -Algorithm SHA256).Hash.ToLowerInvariant()
         file_version = (Get-Item -LiteralPath $Target).VersionInfo.FileVersion
-        source = "Visual Studio 2022 Enterprise VC/Redist/MSVC/$($RedistVersion.Name)/x64/$($OriginDirectory | Split-Path -Leaf)/$Name"
+        source = "$VsLabel VC/Redist/MSVC/$($RedistVersion.Name)/x64/$($OriginDirectory | Split-Path -Leaf)/$Name"
         signature_status = [string]$Signature.Status
         signer = $Signature.SignerCertificate.Subject
         redistribution_list = $RedistLicenseUrl
@@ -72,7 +89,7 @@ function Write-PublicProvenance {
         source_sha256 = $MsFileSetSha256
         source_hash_kind = 'SHA-256 of the concatenated original DLL bytes in source_files order; not an archive hash'
         source_files = @($Records | ForEach-Object { $_.name })
-        license = 'Microsoft Visual Studio 2022 license and REDIST list'
+        license = "Microsoft Visual Studio $VsYear license and REDIST list"
         build_flags = @()
     })
     if (Test-Path -LiteralPath (Join-Path $OverlayDirectory 'ffmpeg.exe')) {
@@ -103,7 +120,10 @@ function Write-PublicProvenance {
 
 $Manifest = [ordered]@{
     format_version = 1
-    build_environment = 'GitHub-hosted Windows runner; Visual Studio 2022 Enterprise'
+    build_environment = "GitHub-hosted Windows runner; $VsLabel"
+    runner_image = $env:ImageOS
+    runner_image_version = $env:ImageVersion
+    visual_studio_version = $VsRecord.installationVersion
     redistributable_version = $RedistVersion.Name
     microsoft_files = $Records
     ffmpeg = [ordered]@{ version = '9.0.2'; source_commit = $SourceCommit; source_url = $SourceUrl; source_sha256 = $SourceSha256.ToLowerInvariant(); modified = $false }
@@ -129,6 +149,11 @@ $FfmpegOutputDirectory = Join-Path $WorkDirectory 'output'
 $DevShellModule = Join-Path $VsInstallation 'Common7\Tools\Microsoft.VisualStudio.DevShell.dll'
 Import-Module $DevShellModule
 Enter-VsDevShell -VsInstallPath $VsInstallation -SkipAutomaticLocation -DevCmdArguments '-arch=x64 -host_arch=x64'
+$Manifest.compiler = [ordered]@{
+    name = 'Microsoft C/C++'
+    file_version = (Get-Item -LiteralPath (Get-Command cl.exe -ErrorAction Stop).Source).VersionInfo.FileVersion
+    target_architecture = 'x64'
+}
 $Bash = 'C:\msys64\usr\bin\bash.exe'
 if (-not (Test-Path -LiteralPath $Bash)) { throw 'The GitHub runner must have MSYS2 installed.' }
 # Keep MSVC's linker before MSYS2's unrelated link.exe on PATH.
