@@ -28,6 +28,6 @@ jobs:
       - name: Check dependencies
         run: python -m pip check
       - name: Test synthetic workers, native state and exports
-        run: python -m pytest -q --basetemp=.pytest-work
+        run: python -m pytest -q --basetemp=.pytest-work -W error::pytest.PytestUnraisableExceptionWarning
       - name: Check Python source syntax
         run: python -m compileall -q hisser main.py scripts

@@ -9,6 +9,8 @@ import pytest
 
 from hisser import app as app_module
 
+pytestmark = pytest.mark.usefixtures("tk_main_thread_cleanup")
+
 
 class DeferredThread:
     """Run a UI-owned worker only when a test explicitly releases it."""
@@ -65,6 +67,7 @@ def native_app(tmp_path, monkeypatch):
             window.destroy()
     except tk.TclError:
         pass
+    DeferredThread.created.clear()
 
 
 def complete(window, transcript):

@@ -68,3 +68,11 @@ Both models passed controlled GPU checks for synthetic English, automatic langua
 An explicitly injected GPU initialization failure triggered exactly one real six-thread CPU retry (32.433 seconds). Cancelling at the fallback event prevented CPU launch. No actual GPU memory failure occurred during the measurements. All five exports from the actual CPU result preserved canonical text/timing; Unicode PDF text and rendered layout passed. Model/backend metadata and the schema-version-1 timed transcript were retained.
 
 The source suite passed 74 tests and 30 subtests. Runtime/model hashes were verified, and targeted Windows Security scans of the runtime and candidate EXE found no threats. Raw acceptance reports and comparison media remain local and excluded from Git.
+
+## Public portable ZIP validation
+
+The final 1.1.0 ZIP is **1,887,204,388 bytes** to download and **2,681,715,548 bytes** extracted, with one large-v3 Q5 model. Its SHA-256 is `e079c823890ed287ff4015f78121f0e6734ad7d2d69aa1ba93ea86271713097d`.
+
+A fresh extraction into a path containing **José & Niño**, with developer paths removed, passed frozen startup and the complete 14.032-second English recognition job. CPU took **38.188 seconds**; Automatic used CUDA and took **15.699 seconds**. Both preserved the source, removed temporary job files and passed all five exports. Recognition timings include media preparation and model loading; exports were checked separately. These single runs show startup/system-load variation compared with the preliminary measurements above and do not establish a fixed speedup.
+
+The final extracted runtime passed 85 executable-file dependency checks with no missing bundled libraries or imported symbols. Windows Security completed a custom scan with zero candidate detections and real-time protection enabled. Checksums and scans are validation evidence, not a guarantee of safety. The EXE remains unsigned.

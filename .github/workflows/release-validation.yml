@@ -19,6 +19,10 @@ jobs:
   portable:
     runs-on: windows-2025
     timeout-minutes: 30
+    # GitHub draft assets need publisher access before they become public.
+    # This manually dispatched job only downloads/verifies the selected asset.
+    permissions:
+      contents: write
     steps:
       - uses: actions/checkout@v7
         with:
