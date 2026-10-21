@@ -21,6 +21,9 @@ SPEC.loader.exec_module(verify)
 @pytest.fixture
 def candidate(inputs, tmp_path, monkeypatch):
     monkeypatch.setattr(verify, "MODELS", {inputs[3].id: inputs[3]})
+    (inputs[2] / "upstream.txt").write_text(
+        "Source: https://static.crates.io/crates/home/home-0.5.11.crate\n"
+        "Notice: rav1e-crates/home/LICENSE-MIT.txt\n", encoding="utf-8")
     entries, identity = collect(inputs)
     result = release.write_release(entries, identity, tmp_path / "candidate")
     return Path(result["archive"]), result["sha256"]

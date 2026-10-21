@@ -57,6 +57,8 @@ LIBRARY_PATTERN = re.compile(
 SHA_PATTERN = re.compile(r"[a-f0-9]{64}")
 VERSION_PATTERN = re.compile(r"\d+\.\d+\.\d+(?:[-.][A-Za-z0-9]+)*")
 MSVC_NAMES = {"msvcp140.dll", "vcruntime140.dll", "vcruntime140_1.dll", "vcomp140.dll"}
+LOCAL_PATH_PATTERN = re.compile(
+    r"(?:(?<![A-Za-z0-9])[A-Za-z]:[\\/]|(?<![A-Za-z0-9_./:-])/(?:Users|home)/|\\\\[^\s\\]+\\)")
 
 
 class ReleaseError(ValueError):
@@ -116,7 +118,7 @@ def public_text(path: Path) -> bytes:
         text = content.decode("utf-8-sig")
     except (OSError, UnicodeError) as exc:
         raise ReleaseError(f"Cannot read public notice: {path.name}") from exc
-    if re.search(r"(?:(?<![A-Za-z0-9])[A-Za-z]:[\\/]|(?<![A-Za-z0-9_./:-])/(?:Users|home)/|\\\\[^\s\\]+\\)", text):
+    if LOCAL_PATH_PATTERN.search(text):
         raise ReleaseError(f"Public notice contains a local path: {path.name}")
     return text.encode("utf-8")
 

@@ -182,7 +182,7 @@ def verify_archive(archive: Path, expected_sha256: str,
                 if info.file_size > 2_000_000:
                     raise VerificationError("An unexpectedly large text record requires review")
                 content = bundle.read(info).decode("utf-8-sig")
-                if re.search(r"(?:(?<![A-Za-z0-9])[A-Za-z]:[\\/]|/Users/|/home/|\\\\[^\s\\]+\\)", content):
+                if packaging.LOCAL_PATH_PATTERN.search(content):
                     raise VerificationError("A public record contains a local machine path")
         profile = _object(bundle.read("Hisser/data/transcription-profile.json"), "transcription profile")
         if profile != {"model_id": model.id, "cpu_threads": 6}:
