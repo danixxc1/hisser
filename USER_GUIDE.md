@@ -30,7 +30,7 @@ Hisser is not code-signed. Windows may warn about an unfamiliar publisher or dow
 
 ## Working space and accuracy
 
-The extracted public release is approximately **2.45 GB**, retains one model and stays **below 4 GB**. Decoded audio needs about **115 MB per hour** in additional temporary space. Silence trimming may briefly need another copy. Job files are removed after completion, failure or cancellation. Recognition needs several GB of RAM and can take longer than the recording, especially on CPU; close heavy applications if memory is tight.
+The extracted public release is approximately **2.68 GB**, retains one model and stays **below 4 GB**. Decoded audio needs about **115 MB per hour** in additional temporary space. Silence trimming may briefly need another copy. Job files are removed after completion, failure or cancellation. Recognition needs several GB of RAM and can take longer than the recording, especially on CPU; close heavy applications if memory is tight.
 
 Start with a short sample. Synthetic English checks do not establish film or Tagalog accuracy. Names, mixed languages, music and overlapping dialogue need review against the recording. Unsaved transcripts live only in the current window; save before closing or choosing another file.
 

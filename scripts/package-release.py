@@ -116,7 +116,7 @@ def public_text(path: Path) -> bytes:
         text = content.decode("utf-8-sig")
     except (OSError, UnicodeError) as exc:
         raise ReleaseError(f"Cannot read public notice: {path.name}") from exc
-    if re.search(r"(?:(?<![A-Za-z0-9])[A-Za-z]:[\\/]|/Users/|/home/|\\\\[^\s\\]+\\)", text):
+    if re.search(r"(?:(?<![A-Za-z0-9])[A-Za-z]:[\\/]|(?<![A-Za-z0-9_./:-])/(?:Users|home)/|\\\\[^\s\\]+\\)", text):
         raise ReleaseError(f"Public notice contains a local path: {path.name}")
     return text.encode("utf-8")
 

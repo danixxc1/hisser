@@ -14,7 +14,7 @@ Hisser runs locally after setup. It needs no cloud account, API key, daily quota
 
 The release includes the app, recognition model and required libraries. You do **not** need Python, Git, FFmpeg, an API key, an installer or administrator access for normal use. **Code → Download ZIP** downloads the developer source and will not give you the ready-to-run app.
 
-Use **Windows 10 or 11, 64-bit x64**. Windows 11 with 16 GB RAM and an RTX 3050 Laptop GPU was tested; 16 GB RAM is recommended. Allow **8 GB free disk space** for the download, extracted app and working space. The extracted public release is approximately **2.45 GB**, with extra temporary space needed while processing recordings. ARM64 and 32-bit Windows are not tested.
+Use **Windows 10 (22H2) or 11, 64-bit x64**. Windows 11 with 16 GB RAM and an RTX 3050 Laptop GPU was tested; 16 GB RAM is recommended. Allow **8 GB free disk space** for the download, extracted app and working space. The extracted public release is approximately **2.68 GB**, with extra temporary space needed while processing recordings. ARM64 and 32-bit Windows are not tested.
 
 Leave **Processing** on **Automatic** to use an available compatible NVIDIA GPU and its existing driver. CPU processing is available when acceleration cannot be used. A GPU toolkit or new driver is not installed; CPU transcription can take longer than the recording.
 
@@ -88,7 +88,7 @@ Choose another folder with `-Destination 'D:\Tools\Hiss'`. `-WhatIf` previews de
 
 For a CPU-only package, prepare with `--backend cpu` and build with `-Backend cpu`; CUDA DLLs are excluded. For repeat CUDA builds, preserve portable `data` and use `prepare_runtime.py --backend cuda --skip-model`, or restore the complete verified `_internal\runtime` from the portable app to avoid another model copy. Read [maintenance instructions](scripts/MAINTENANCE.md) before an update. `install.ps1` is a compatibility wrapper for portable packaging; it does not register an app.
 
-Public releases use a separately reviewed redistribution runtime, including a native-only LGPL FFmpeg build and Microsoft DLLs from Visual Studio's redistribution directory. Do not publish an arbitrary FFmpeg build from PATH or DLLs copied from a Windows system folder. See [distribution requirements](docs/DISTRIBUTION.md) and [the release checklist](docs/RELEASING.md).
+Public releases use a separately reviewed redistribution runtime, including a pinned BtbN FFmpeg build under LGPL 3 or later and Microsoft DLLs from Visual Studio's redistribution directory. Matching FFmpeg and dependency source archives, build recipes and notices accompany the release. Do not publish an arbitrary FFmpeg build from PATH or DLLs copied from a Windows system folder. See [distribution requirements](docs/DISTRIBUTION.md) and [the release checklist](docs/RELEASING.md).
 
 ## Model and storage
 

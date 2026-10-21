@@ -11,3 +11,4 @@
 # Preserve the original bundled vendor license, including upstream spacing.
 runtime/licenses/NVIDIA-CUDA-cuBLAS-LICENSE.txt -whitespace
 licenses/*.txt -whitespace
+licenses/** -whitespace

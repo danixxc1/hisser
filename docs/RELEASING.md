@@ -12,19 +12,31 @@ The user download belongs in **GitHub Releases**. The Git repository contains so
 
 The default released configuration is **large-v3 Q5**, **Automatic** processing and **six CPU threads**. Automatic uses the bundled CUDA runtime when available and falls back to CPU as documented. Turbo is not the selected release model.
 
-For the public redistribution runtime, manually run **Build public distribution runtime** (`.github/workflows/release-runtime.yml`) at the reviewed source commit. It uses the hosted Windows runner's existing licensed Visual Studio Enterprise redistributable directories and compiles the hash-pinned official FFmpeg 9.0.2 source with native codecs, LGPL configuration and local-file processing. The build records the selected Visual Studio version and its matching redistribution terms. It does not publish a release. Download its **hisser-distribution-runtime** artifact and review its hashes, Microsoft signatures, FFmpeg license/configuration and source archive before use. Details are in [distribution requirements](DISTRIBUTION.md).
+For the selected public media runtime, use the pinned **BtbN Windows x64 LGPL** archive, exact source commit and build-recipe revision in [distribution requirements](DISTRIBUTION.md). Verify the upstream archive hash before extracting only ffmpeg and ffprobe. Preserve the enabled dependency sources from the same upstream build's cache, the exact FFmpeg source, recipes, patches, configuration, compiler records and complete notices. Record their provenance and each overlaid binary's size and SHA-256 in the runtime overlay.
 
-For example, after completing the build and third-party licensing checks, substitute the path to the validated portable app:
+The optional **Build public distribution runtime** workflow (`.github/workflows/release-runtime.yml`) obtains unmodified Microsoft files from the hosted Windows runner's licensed Visual Studio Enterprise redistribution directories and records matching terms, signatures and hashes. Retain those reviewed Microsoft files and provenance in the release overlay. Its native-only FFmpeg build is not the selected release runtime: Windows application-control policy rejected that output on the tested laptop. Do not disable security protections to make a candidate pass. A future replacement needs fresh end-to-end validation and matching source materials. The workflow itself does not publish a release.
+
+Prepare a new combined overlay from the reviewed Microsoft files and the pinned media archive. The preparation script verifies the archive and selected binary hashes and preserves the Microsoft provenance. It does not modify the working app or execute downloaded programs:
+
+```powershell
+.\.venv\Scripts\python.exe scripts\prepare-release-media.py `
+  --base-overlay 'qa\distribution-runtime\runtime-overlay' `
+  --output-directory 'qa\final-runtime-overlay'
+```
+
+The pins are recorded in `runtime/distribution-media.json`. Supply `--archive 'path\to\pinned-build.zip'` to use an already downloaded archive; otherwise the script downloads it to the ignored `downloads/public-media` directory. Use a fresh output directory. Collect and review the matching source companions and notices separately; a successful overlay preparation alone does not establish source compliance or runtime compatibility.
+
+After completing the build and third-party licensing checks, substitute the path to the validated portable app:
 
 ```powershell
 .\.venv\Scripts\python.exe scripts\package-release.py `
   --source-directory 'D:\Tools\Hiss' `
   --output-directory 'qa\release' `
   --version 1.1.0 `
-  --runtime-overlay 'qa\distribution-runtime\runtime-overlay'
+  --runtime-overlay 'qa\final-runtime-overlay'
 ```
 
-The packager's default legal directory is the repository's `licenses` folder; `--legal-directory` can explicitly select another reviewed legal bundle. Keep the output directory ignored by Git and upload only the final reviewed assets. Publish the unchanged **ffmpeg-9.0.2-source.tar.gz** alongside the app and a **ffmpeg-build-source.zip** containing its build scripts, generated configuration, license and build reports from `corresponding-source`. Include checksums for both source assets.
+The packager's default legal directory is the repository's `licenses` folder; `--legal-directory` can explicitly select another reviewed legal bundle. Keep the output directory ignored by Git and upload only the final reviewed assets. Publish corresponding-source companion archives alongside the app, containing the exact FFmpeg source, enabled dependency source cache, pinned recipes and patches, license texts and build/provenance reports. Choose versioned source asset names and link the actual uploaded names from the release notes. Include every companion's checksum in **SHA256SUMS.txt**; a link to an expiring workflow artifact is insufficient.
 
 ## Verify the downloadable artifact
 

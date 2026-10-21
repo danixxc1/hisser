@@ -185,13 +185,16 @@ def test_public_notices_cannot_copy_personal_paths(inputs):
 
 
 def test_public_notices_allow_upstream_https_license_links(inputs):
-    notice = b"License: https://www.python.org/psf/license/\nSource: https://github.com/FFmpeg/FFmpeg\n"
+    notice = (b"License: https://www.python.org/psf/license/\nSource: https://github.com/FFmpeg/FFmpeg\n"
+              b"Crate: https://static.crates.io/crates/home/home-0.5.11.crate\n"
+              b"Notice: rav1e-crates/home/LICENSE-MIT.txt\n")
     put(inputs[2], "linked-license.txt", notice)
     entries, _ = collect(inputs)
     assert next(entry.content for entry in entries if entry.relative == "licenses/linked-license.txt") == notice
 
 
-@pytest.mark.parametrize("path", ["C:/Users/Someone/private.txt", "C:\\Users\\Someone\\private.txt"])
+@pytest.mark.parametrize("path", ["C:/Users/Someone/private.txt", "C:\\Users\\Someone\\private.txt",
+                                  "/home/someone/private.txt", "/Users/someone/private.txt"])
 def test_public_notices_reject_both_windows_profile_path_styles(inputs, path):
     put(inputs[2], "local-source.txt", ("Local source: " + path).encode("utf-8"))
     with pytest.raises(release.ReleaseError, match="local path"):
