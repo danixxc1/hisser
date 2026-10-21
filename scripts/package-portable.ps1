@@ -168,7 +168,8 @@ if (Test-Path -LiteralPath $PortableRoot) {
     if (-not (Test-Path -LiteralPath $Marker -PathType Leaf)) { throw 'The destination folder already exists without the portable marker. It was left untouched.' }
     $Existing = Get-Content -LiteralPath $Marker -Raw -Encoding UTF8 | ConvertFrom-Json
     if ($Existing.application_id -ne $ApplicationId) { throw 'The existing Hisser folder is unrecognized. It was left untouched.' }
-    $Known = @('_internal', 'Hisser.exe', 'build-manifest.json', 'portable.json', '.portable-self-test.json', 'USER_GUIDE.md', 'data')
+    $Known = @('_internal', 'Hisser.exe', 'build-manifest.json', 'portable.json', '.portable-self-test.json', 'USER_GUIDE.md', 'data',
+        'LICENSE', 'licenses', 'docs', 'START HERE.txt', 'THIRD_PARTY_NOTICES.md', 'release-manifest.json')
     $Unknown = @(Get-ChildItem -LiteralPath $PortableRoot -Force | Where-Object { $_.Name -notin $Known })
     if ($Unknown.Count -gt 0) { throw "Extra files exist at the app root; move them outside Hisser before updating: $($Unknown.Name -join ', ')" }
     if (Test-Path -LiteralPath (Join-Path $PortableRoot 'data') -PathType Container) { $DataOrigin = Join-Path $PortableRoot 'data' }

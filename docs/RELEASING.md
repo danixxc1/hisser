@@ -26,6 +26,8 @@ Prepare a new combined overlay from the reviewed Microsoft files and the pinned 
 
 The pins are recorded in `runtime/distribution-media.json`. Supply `--archive 'path\to\pinned-build.zip'` to use an already downloaded archive; otherwise the script downloads it to the ignored `downloads/public-media` directory. Use a fresh output directory. Collect and review the matching source companions and notices separately; a successful overlay preparation alone does not establish source compliance or runtime compatibility.
 
+Upstream daily builds expire. Hisser's matching release also preserves **ffmpeg-n9.0.2-31-gc89d6ee1ca-win64-lgpl-9.0.zip** as an optional maintainer input with the same pinned SHA-256. Download that copy and pass `--archive` when the upstream asset is no longer available. Normal app users need only the Hisser Windows ZIP.
+
 After completing the build and third-party licensing checks, substitute the path to the validated portable app:
 
 ```powershell
