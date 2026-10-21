@@ -99,6 +99,7 @@ function Write-PublicProvenance {
             source_url = $SourceUrl
             source_sha256 = $SourceSha256.ToLowerInvariant()
             source_commit = $SourceCommit
+            version_identity = 'Unmodified source RELEASE file; exported revision=9.0.2 prevents parent-checkout Git detection'
             license = 'LGPL-2.1-or-later'
             build_flags = @('--toolchain=msvc', '--target-os=win64', '--arch=x86_64',
                 '--disable-autodetect', '--disable-network', '--disable-gpl', '--disable-nonfree',
@@ -126,7 +127,7 @@ $Manifest = [ordered]@{
     visual_studio_version = $VsRecord.installationVersion
     redistributable_version = $RedistVersion.Name
     microsoft_files = $Records
-    ffmpeg = [ordered]@{ version = '9.0.2'; source_commit = $SourceCommit; source_url = $SourceUrl; source_sha256 = $SourceSha256.ToLowerInvariant(); modified = $false }
+    ffmpeg = [ordered]@{ version = '9.0.2'; source_commit = $SourceCommit; source_url = $SourceUrl; source_sha256 = $SourceSha256.ToLowerInvariant(); modified = $false; version_identity = 'Unmodified source RELEASE file; exported revision=9.0.2 prevents parent-checkout Git detection' }
 }
 $Manifest | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath (Join-Path $ReportsDirectory 'distribution-runtime.json') -Encoding utf8
 Copy-Item -LiteralPath $PSCommandPath -Destination $SourcesDirectory

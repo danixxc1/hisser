@@ -14,7 +14,7 @@ Hisser runs locally after setup. It needs no cloud account, API key, daily quota
 
 The release includes the app, recognition model and required libraries. You do **not** need Python, Git, FFmpeg, an API key, an installer or administrator access for normal use. **Code → Download ZIP** downloads the developer source and will not give you the ready-to-run app.
 
-Use **Windows 10 or 11, 64-bit x64**. Windows 11 with 16 GB RAM and an RTX 3050 Laptop GPU was tested; 16 GB RAM is recommended. Allow **8 GB free disk space** for the download, extracted app and working space. The extracted app is approximately **2.86 GB**, with extra temporary space needed while processing recordings. ARM64 and 32-bit Windows are not tested.
+Use **Windows 10 or 11, 64-bit x64**. Windows 11 with 16 GB RAM and an RTX 3050 Laptop GPU was tested; 16 GB RAM is recommended. Allow **8 GB free disk space** for the download, extracted app and working space. The extracted public release is approximately **2.45 GB**, with extra temporary space needed while processing recordings. ARM64 and 32-bit Windows are not tested.
 
 Leave **Processing** on **Automatic** to use an available compatible NVIDIA GPU and its existing driver. CPU processing is available when acceleration cannot be used. A GPU toolkit or new driver is not installed; CPU transcription can take longer than the recording.
 

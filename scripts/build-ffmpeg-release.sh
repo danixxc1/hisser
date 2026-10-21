@@ -15,6 +15,20 @@ export PATH="$msvc_directory:/usr/bin:$PATH"
 source_directory=$(/usr/bin/cygpath -u "$1")
 build_directory=$(/usr/bin/cygpath -u "$2")
 output_directory=$(/usr/bin/cygpath -u "$3")
+
+# This pinned source archive has no .git or VERSION file. FFmpeg's version.sh
+# otherwise discovers Hisser's parent checkout and embeds its unrelated hash.
+# Its supported revision environment variable keeps the source tree unmodified.
+revision=$(tr -d '\r\n' < "$source_directory/RELEASE")
+if [[ "$revision" != '9.0.2' ]]; then
+  printf 'Unexpected FFmpeg RELEASE version: %s\n' "$revision" >&2
+  exit 1
+fi
+export revision
+if [[ "$(/usr/bin/bash "$source_directory/ffbuild/version.sh" "$source_directory")" != "$revision" ]]; then
+  printf 'FFmpeg version detection does not match its verified source release.\n' >&2
+  exit 1
+fi
 mkdir -p "$build_directory" "$output_directory"
 cd "$build_directory"
 
@@ -51,6 +65,9 @@ cp "$source_directory/COPYING.LGPLv2.1" "$output_directory/"
 "$output_directory/ffmpeg.exe" -L > "$output_directory/ffmpeg-license.txt" 2>&1
 "$output_directory/ffmpeg.exe" -buildconf > "$output_directory/ffmpeg-buildconf.txt" 2>&1
 "$output_directory/ffprobe.exe" -version > "$output_directory/ffprobe-version.txt" 2>&1
+
+grep -q '^ffmpeg version 9\.0\.2 ' "$output_directory/ffmpeg-version.txt"
+grep -q '^ffprobe version 9\.0\.2 ' "$output_directory/ffprobe-version.txt"
 
 if grep -q -- '--enable-gpl\|--enable-nonfree' "$output_directory/ffmpeg-buildconf.txt"; then
   printf 'Unexpected GPL or nonfree configuration; do not distribute this build.\n' >&2

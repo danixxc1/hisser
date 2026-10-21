@@ -59,6 +59,8 @@ The user selected **large-v3 Q5 with NVIDIA GPU acceleration**, retaining the ex
 
 The deployed portable folder contains one model and occupies approximately **2.862 GB** (decimal), below the revised **4,000,000,000-byte** ceiling. PyInstaller's identical extra root copies of the two cuBLAS DLLs were removed after hash comparison with the retained CUDA files, saving 632,738,304 bytes. The complete runtime remains beside the application. No driver, toolkit or global Python package was installed.
 
+The public release uses a smaller native-only FFmpeg build and reviewed Microsoft redistributables, while retaining the same recognition model and engines. Its extracted footprint is approximately **2.45 GB**. The measurements above describe the original tested deployment; the size difference does not establish a transcription speed change. Release checks and downloadable asset sizes are recorded separately with the release.
+
 Both models passed controlled GPU checks for synthetic English, automatic language detection, cancellation/retry, missing or damaged inputs, Unicode paths, source preservation and recognized speech after minute 30. The long source is 30:38.523 with exact silence followed by speech at 30:30; it verifies full scanning and original timestamps rather than continuous long-dialogue performance.
 
 An explicitly injected GPU initialization failure triggered exactly one real six-thread CPU retry (32.433 seconds). Cancelling at the fallback event prevented CPU launch. No actual GPU memory failure occurred during the measurements. All five exports from the actual CPU result preserved canonical text/timing; Unicode PDF text and rendered layout passed. Model/backend metadata and the schema-version-1 timed transcript were retained.
