@@ -16,7 +16,7 @@ import unittest
 from unittest.mock import patch
 import wave
 
-from hisser.engine import Cancelled, Transcriber, TranscriptionError
+from hisser.engine import Cancelled, Transcriber, TranscriptionError, _cli_argument_path
 from hisser.models import ModelSpec
 
 
@@ -44,6 +44,13 @@ elif stage == "decode":
         out.setparams((1, 2, 16000, 0, "NONE", "not compressed"))
         out.writeframes(bytes(16000 * 2 * 2))
 elif stage == "infer":
+    # Resolve the actual argument paths in the child's cwd, like whisper does.
+    # This also catches relative paths calculated for the wrong CPU/CUDA folder.
+    model = pathlib.Path(args[args.index("-m") + 1])
+    audio = pathlib.Path(args[args.index("-f") + 1])
+    assert model.read_bytes().startswith(b"lmgg")
+    with wave.open(str(audio), "rb") as prepared:
+        assert prepared.getframerate() == 16000
     if mode == "gpu_then_cpu_error" and "-ng" in args:
         print("Synthetic CPU recognition failure", file=sys.stderr, flush=True)
         sys.exit(9)
@@ -152,6 +159,45 @@ class EngineTests(unittest.TestCase):
         self.assertEqual(result["segments"], [])
         self.assertEqual(result["duration_ms"], 2000)
         self.assert_clean()
+
+    def test_unicode_portable_folder_uses_resolvable_ascii_recognition_paths(self):
+        portable = self.root / "José & Niño"
+        new_runtime = portable / "_internal" / "runtime"
+        new_runtime.parent.mkdir(parents=True)
+        self.runtime.rename(new_runtime)
+        self.runtime = new_runtime
+        self.helper = self.runtime / "fake_cli.py"
+        models = portable / "data" / "models"
+        models.mkdir(parents=True)
+        new_model = models / self.model.name
+        self.model.with_suffix(".bin.metadata.json").rename(new_model.with_suffix(".bin.metadata.json"))
+        self.model.rename(new_model)
+        self.model = new_model
+        self.jobs = portable / "data" / "temp"
+        self.add_gpu_runtime()
+        for processing, scenario in (("cpu", "success"), ("auto", "success"), ("auto", "gpu_error")):
+            with self.subTest(processing=processing, scenario=scenario):
+                self.calls.clear()
+                self.events.clear()
+                self.scenario(scenario)
+                self.engine = Transcriber(self.runtime, self.model, self.jobs, processing=processing)
+                result = self.run_job()
+                self.assertTrue(result["text"])
+                recognition = [call for call in self.calls if Path(call[0][0]).name == "whisper-cli.exe"]
+                self.assertEqual(len(recognition), 2 if scenario == "gpu_error" else 1)
+                for args, options in recognition:
+                    paths = [args[args.index(flag) + 1] for flag in ("-m", "-f", "-of")]
+                    self.assertTrue(all(path.isascii() and not Path(path).is_absolute() for path in paths))
+                    model, audio, output = [(options["cwd"] / path).resolve() for path in paths]
+                    self.assertEqual(model, self.model)
+                    self.assertEqual(audio.parent.parent, self.jobs)
+                    self.assertEqual(output.parent, audio.parent)
+                self.assert_clean()
+
+    def test_external_drive_path_keeps_absolute_argument(self):
+        path = Path("Z:/external-job/audio.wav")
+        with patch("hisser.engine.os.path.relpath", side_effect=ValueError("different drive")):
+            self.assertEqual(_cli_argument_path(path, self.runtime), str(path))
 
     def add_gpu_runtime(self):
         directory = self.runtime / "cuda"

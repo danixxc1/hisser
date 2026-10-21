@@ -69,6 +69,20 @@ def _bounded_detail(lines: deque[str]) -> str:
     return detail[-_MAX_LOG_CHARS:].strip()
 
 
+def _cli_argument_path(path: Path, working_directory: Path) -> str:
+    """Keep a portable folder's Unicode prefix out of whisper's narrow argv.
+
+    Each child starts in its executable's folder. Managed model/job filenames
+    are ASCII, so relative paths avoid b5454's Windows argument conversion
+    without copying the model or changing the application's working directory.
+    A caller-supplied path on another drive cannot be made relative.
+    """
+    try:
+        return os.path.relpath(path, working_directory)
+    except ValueError:
+        return str(path)
+
+
 class Transcriber:
     def __init__(self, runtime_dir: Path, model_path: Path, temp_root: Path | None = None,
                  *, processing: str = "cpu", threads: int = 2, model_spec: ModelSpec | None = None):
@@ -260,8 +274,10 @@ class Transcriber:
                         gpu_failure = True
                 progress(stream, line)
 
-            args = [str(cli), "-m", str(self.model_path), "-f", str(audio), "-l", language,
-                    "-t", str(self.threads), "-p", "1", "-pp", "-ojf", "-of", str(output)]
+            args = [str(cli), "-m", _cli_argument_path(self.model_path, cli.parent),
+                    "-f", _cli_argument_path(audio, cli.parent), "-l", language,
+                    "-t", str(self.threads), "-p", "1", "-pp", "-ojf",
+                    "-of", _cli_argument_path(output, cli.parent)]
             if backend == "cpu":
                 args.append("-ng")
             try:
